@@ -468,7 +468,7 @@ function prepScreen(game, { stageIdx }) {
               </div>`).join('')}
             <div class="sc-row boss">
               <img class="ticon" src="${troopIcon(st.boss.type, them, 48)}" alt="">
-              <b>적장 ${st.boss.name}</b><span class="cnt">${TROOPS[st.boss.type].name}</span>
+              <b>적장 ${st.boss.name}</b><span class="cnt">${TROOPS[st.boss.type].name}</span><span class="boss-warn">놓치면 패배!</span>
               <span class="weak">${BOSS_SKILLS[st.boss.skill]}</span>
             </div>
           </div>
@@ -899,7 +899,7 @@ function resultScreen(game, { r, out }) {
   if (!r.won) {
     const sum = stageSummary(buildWaves(st, r.stageIdx + 1, stageLayout(r.stageIdx + 1).paths.length));
     const topT = TROOP_KEYS.filter(t => sum[t]).sort((a, b) => sum[b] - sum[a])[0];
-    tip = `💡 이번 적은 <b>${TROOPS[topT].name}</b>이 많았어요. ${weakTo(topT).map(t => TROOPS[t].name).join(', ')}이(가) 강해요. 병영에서 병종을 강화하거나, 아이템을 챙겨 보세요.`;
+    tip = r.reason === 'boss' ? `💡 적장 <b>${st.boss.name}</b>이(가) 성문을 넘으면 바로 져요. 적장은 가까이 있는 우리 부대와 먼저 싸우니, 적장이 지나가는 길목에 강한 부대와 장수를 모으고, 군주 스킬과 벽력탄·목책을 아껴 두었다가 적장에게 쓰세요. 적장은 <b>${TROOPS[st.boss.type].name}</b>이라 ${weakTo(st.boss.type).map(t => TROOPS[t].name).join(', ')}이(가) 강해요.` : `💡 이번 적은 <b>${TROOPS[topT].name}</b>이 많았어요. ${weakTo(topT).map(t => TROOPS[t].name).join(', ')}이(가) 강해요. 병영에서 병종을 강화하거나, 아이템을 챙겨 보세요.`;
   }
   const hasNext = r.won && r.stageIdx + 1 < STAGE_COUNT && r.stageIdx + 1 <= s.progress;
   const el = h(`
@@ -907,7 +907,7 @@ function resultScreen(game, { r, out }) {
       <div class="panel result-panel">
         <h1>${r.won ? '🏆 승리!' : '💥 패배...'}</h1>
         ${r.won ? `<div class="big-stars">${[1, 2, 3].map(k => `<span class="${k <= r.stars ? 'on' : ''}" style="animation-delay:${k * 0.25}s">★</span>`).join('')}</div>
-        <div class="gate-left">성문 내구도 ${r.gate}/20 남음</div>` : `<div class="gate-left">${r.wavesReached}/${r.totalWaves} 웨이브까지 버텼어요</div>`}
+        <div class="gate-left">성문 내구도 ${r.gate}/20 남음</div>` : `<div class="gate-left">${r.reason === 'boss' ? `적장 ${st.boss.name}이(가) 성문을 넘었어요` : `${r.wavesReached}/${r.totalWaves} 웨이브까지 버텼어요`}</div>`}
         ${r.won ? `<div class="outro">${st.outro.map(l => `<p>${l}</p>`).join('')}</div>` : ''}
         <div class="rewards">${lines.join('') || '<div class="rw muted">보상 없음</div>'}</div>
         ${tip ? `<div class="tip">${tip}</div>` : ''}

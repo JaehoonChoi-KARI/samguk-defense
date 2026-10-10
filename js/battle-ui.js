@@ -860,7 +860,7 @@ export class BattleController {
       this.select(null);
       this.setAim(null);
       if (sim.state === 'won') { sfx.clear(); this.banner('승리!', 'win', 3000); }
-      else { sfx.death(); this.banner('성문이 뚫렸다...', 'lose', 3000); }
+      else { sfx.death(); this.banner(sim.lostReason === 'boss' ? `적장 ${this.stage.boss.name}이(가) 성문을 넘었다...` : '성문이 뚫렸다...', 'lose', 3000); }
     }
     if (this.ended) {
       this.endT -= dt;
@@ -883,6 +883,7 @@ export class BattleController {
       itemsUsed: { ...sim.itemsUsed },
       wavesReached: sim.waveIdx + 1,
       totalWaves: sim.totalWaves,
+      reason: sim.lostReason || null,
       time: sim.time,
     };
   }
@@ -895,11 +896,12 @@ export class BattleController {
       switch (e.k) {
         case 'wave':
           sfx.horn();
-          this.banner(e.boss ? `마지막 웨이브! 적장 ${this.stage.boss.name}이(가) 온다!` : `웨이브 ${e.i + 1}`, e.boss ? 'boss' : '', 2000);
+          this.banner(e.boss ? `마지막 웨이브! 적장 ${this.stage.boss.name}을(를) 놓치면 패배!` : `웨이브 ${e.i + 1}`, e.boss ? 'boss' : '', 2400);
           if (this.tutorial === 2) this.advanceTutorial(2);
           break;
         case 'boss': sfx.boss(); break;
         case 'leak': sfx.gateHit(); break;
+        case 'bossLeak': sfx.gateHit(); break;
         case 'die': if (e.boss) sfx.crit(); else sfx.hit(); break;
         case 'squadDown': sfx.squadDown(); break;
         case 'generalDown': sfx.hurt(); break;

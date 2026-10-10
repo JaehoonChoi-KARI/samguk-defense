@@ -4,7 +4,7 @@
 
 import {
   TROOPS, FOES, STAR_MULT, STAR_RANGE, STAR_COST, RETREAT_REFUND, GATE_HP, counterMult, counterLevel, BOSS,
-  SKILLS, ITEMS, stageHpMult, stageAtkMult, killFood, PASSIVE_FOOD, TROOP_KEYS, diffScale,
+  SKILLS, ITEMS, stageHpMult, stageAtkMult, killFood, PASSIVE_FOOD, TROOP_KEYS, diffScale, lateEase,
   GENERALS, GEN_SPECIALS, GENERAL_RECOVER, GENERAL_MOVE_WAIT, PLACE_GAP, ROAD_CLEAR,
 } from './data.js';
 import { pathAt, nearestOnPaths, WORLD_W, WORLD_H } from './maps.js';
@@ -17,6 +17,7 @@ const NEXT_WAVE_WAIT = 18;
 const EARLY_BONUS = 2; // 군량 per second skipped
 const LORD_REVIVE = 12;
 const MAX_RAIDERS = 2;
+const BOSS_ENGAGE = 150; // an enemy general stops to fight our units this close to it
 
 export class Sim {
   constructor(setup) {
@@ -27,8 +28,9 @@ export class Sim {
     this.waves = setup.waves;
     this.r = rng(`${setup.seed || 'battle'}:${setup.stage.id}`);
     const D = setup.diff || { hp: 1, atk: 1 };
-    this.hpMult = stageHpMult(this.n) * diffScale(D.hp, this.n);
-    this.atkMult = stageAtkMult(this.n) * diffScale(D.atk, this.n);
+    const ease = lateEase(D, this.n);
+    this.hpMult = stageHpMult(this.n) * diffScale(D.hp, this.n) * ease;
+    this.atkMult = stageAtkMult(this.n) * diffScale(D.atk, this.n) * ease;
     this.mods = setup.mods;
 
     this.state = 'ready'; // ready → play → won | lost
@@ -390,7 +392,7 @@ export class Sim {
       gate: F.gate, reward: killFood(type, this.n),
       state: 'walk', blocker: null, raid: null, raidCd: 0,
       slowT: 0, slow: 0, burnT: 0, burnDps: 0, stunT: 0, rallyT: 0, healT: 1 + this.r() * 2,
-      cmT: 0, face: 1, walkT: this.r() * 10, atkAnim: 0, chargeT: 0, charged: null,
+      cmT: 0, face: 1, walkT: this.r() * 10, atkAnim: 0, chargeT: 0,
     };
     if (boss) {
       const B = this.setup.stage.boss;
@@ -398,7 +400,7 @@ export class Sim {
       f.title = B.title;
       f.skill = B.skill;
       f.skillT = 5;
-      f.hp *= BOSS.hp;
+      f.hp *= BOSS.hp * (this.setup.bossHp || 1);
       f.atk *= BOSS.atk;
       f.speed = F.speed * BOSS.speed;
       f.gate = BOSS.gate;
@@ -449,8 +451,12 @@ export class Sim {
     this.updateProjectiles(dt);
     this.updateZones(dt);
 
-    if (this.gate <= 0) {
+    if (this.bossLeaked) {
+      this.state = 'lost';
+      this.emit({ k: 'lost' });
+    } else if (this.gate <= 0) {
       this.gate = 0;
+      this.lostReason = 'gate';
       this.state = 'lost';
       this.emit({ k: 'lost' });
     } else if (lastWave && !this.spawnQueue.length && !this.foes.length) {
@@ -490,11 +496,16 @@ export class Sim {
         f.face = Math.cos(p.ang) >= 0 ? 1 : -1;
         if (f.chargeT > 0) {
           f.chargeT -= dt;
-          for (const b of this.blockers()) {
-            if (!f.charged.has(b.id) && dist(f, b) < 34) {
-              f.charged.add(b.id);
-              this.hitAlly(b, f.atk * 2, f.type);
-              this.emit({ k: 'slam', x: b.x, y: b.y });
+          // the charge ends on the first thing it rams, which then holds the general
+          const b = this.blockers().find(o => dist(f, o) < 34);
+          if (b) {
+            f.chargeT = 0;
+            this.hitAlly(b, f.atk * 2, f.type);
+            this.emit({ k: 'slam', x: b.x, y: b.y });
+            if (b.hp > 0 && this.blockers().includes(b)) {
+              f.state = 'blocked';
+              f.blocker = b;
+              b.blocking.push(f);
             }
           }
         }
@@ -508,12 +519,29 @@ export class Sim {
             if (t) { f.state = 'raid'; f.raid = t; }
           }
         }
+        // The enemy general does not walk past our units: it turns on the nearest one.
+        if (f.boss && f.chargeT <= 0) {
+          f.raidCd -= dt;
+          if (f.raidCd <= 0) {
+            f.raidCd = 0.5;
+            const t = this.bossPrey(f);
+            if (t) { f.state = 'raid'; f.raid = t; }
+          }
+        }
       } else if (f.state === 'raid' || f.state === 'return') {
+        if (f.state === 'raid' && f.boss && (f.raidCd -= dt) <= 0) {
+          // keep fighting whatever is nearest; go back to the road when nothing is left near
+          f.raidCd = 0.5;
+          f.raid = this.bossPrey(f);
+        }
+        if (f.state === 'raid' && !this.allyAlive(f.raid)) {
+          f.raid = f.boss ? this.bossPrey(f) : null;
+          if (!f.raid) { f.state = 'return'; continue; }
+        }
         const tgt = f.state === 'raid' ? f.raid : pathAt(this.paths[f.path], f.d);
-        if (f.state === 'raid' && (!this.squads.includes(f.raid))) { f.state = 'return'; f.raid = null; continue; }
         const dx = tgt.x - f.x, dy = tgt.y - f.y;
         const d = Math.hypot(dx, dy);
-        const reach = f.state === 'raid' ? 24 : 3;
+        const reach = f.state === 'raid' ? (f.boss && f.range ? f.range * 0.9 : 24) : 3;
         if (d > reach + 0.5) {
           const step = Math.min(d - reach, speed * dt);
           f.x += dx / d * step;
@@ -522,11 +550,13 @@ export class Sim {
           f.walkT += dt;
         } else if (f.state === 'return') {
           f.state = 'walk';
-          f.raidCd = 3;
+          f.raidCd = f.boss ? 0.5 : 3;
         } else if (f.cdT <= 0) {
           f.cdT = f.cd;
           f.atkAnim = 0.25;
-          this.hitAlly(f.raid, f.atk, f.type);
+          f.face = tgt.x >= f.x ? 1 : -1;
+          if (f.boss && f.range) this.shootAt(f, f.raid);
+          else this.hitAlly(f.raid, f.atk, f.type);
         }
         continue;
       }
@@ -555,6 +585,24 @@ export class Sim {
     }
   }
 
+  allyAlive(a) {
+    if (!a || a.hp <= 0 || a.gone) return false;
+    if (a.kind === 'lord') return !a.dead;
+    return this.squads.includes(a) || this.militia.includes(a);
+  }
+
+  // The nearest of our squads, militia or the lord within reach of the enemy general.
+  bossPrey(f) {
+    const reach = Math.max(BOSS_ENGAGE, f.range || 0);
+    let best = null, bd = reach;
+    for (const a of this.allies()) {
+      if (a.kind === 'wall') continue;
+      const d = dist(a, f);
+      if (d < bd) { bd = d; best = a; }
+    }
+    return best;
+  }
+
   foeHeal(f) {
     if (f.healT > 0) return false;
     const hurt = this.foes.filter(o => o !== f && o.hp < o.maxHp * 0.85 && dist(o, f) < 130);
@@ -578,7 +626,6 @@ export class Sim {
         if (f.state !== 'walk' && f.state !== 'blocked') { f.skillT = 1; return; }
         this.releaseFoe(f);
         f.chargeT = 1.3;
-        f.charged = new Set();
         this.emit({ k: 'bossSkill', skill: 'charge', x: f.x, y: f.y, name: f.name });
         break;
       case 'summon': {
@@ -1098,8 +1145,15 @@ export class Sim {
     f.gone = true;
     this.releaseFoe(f);
     this.foes.splice(this.foes.indexOf(f), 1);
-    this.gate -= f.gate;
     this.stats.leaked++;
+    if (f.boss) {
+      // the enemy general got through: the battle is lost at once
+      this.bossLeaked = true;
+      this.lostReason = 'boss';
+      this.emit({ k: 'bossLeak', x: f.x, y: f.y, name: f.name });
+      return;
+    }
+    this.gate -= f.gate;
     this.emit({ k: 'leak', x: f.x, y: f.y, n: f.gate });
   }
 
@@ -1162,7 +1216,7 @@ export class Sim {
     this.releaseAll(s);
     const i = this.squads.indexOf(s);
     if (i >= 0) this.squads.splice(i, 1);
-    for (const f of this.foes) if (f.raid === s) { f.raid = null; f.state = 'return'; }
+    for (const f of this.foes) if (f.raid === s && !f.boss) { f.raid = null; f.state = 'return'; }
   }
 
   removeAlly(a) {

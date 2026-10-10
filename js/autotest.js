@@ -99,6 +99,43 @@ function botBattles() {
     if (sim.state !== 'won' && sim.state !== 'lost') fail(`${lord} ${n}: battle did not finish`);
     if (n === 1 && sim.state !== 'won') fail(`${lord} stage 1 lost`);
   }
+  // an enemy general reaching the gate loses the battle at once
+  {
+    const s = expectedSave('liubei', 1, 1);
+    const st = STORIES.liubei.stages[0];
+    const sim = new Sim(battleSetup(s, 0, st, { seed: 'leak' }));
+    sim.start();
+    sim.spawnFoe(st.boss.type, 0, true, sim.paths[0].len - 10);
+    for (let i = 0; i < 60; i++) sim.update(1 / 30);
+    if (sim.state !== 'lost' || sim.lostReason !== 'boss') fail(`boss leak: ${sim.state} ${sim.lostReason}`);
+    out.checks.push({ bossLeak: sim.state, gate: sim.gate });
+  }
+  // the enemy general turns on a squad standing near its road instead of walking past it
+  {
+    const s = expectedSave('liubei', 3, 1);
+    const st = STORIES.liubei.stages[2];
+    const sim = new Sim(battleSetup(s, 2, st, { seed: 'engage' }));
+    sim.start();
+    sim.food = 999;
+    sim.roster.archer = 3;
+    const path = sim.paths[0];
+    let sq = null;
+    for (let k = 0.45; k < 0.8 && !sq; k += 0.05) {
+      const p = pathAt(path, path.len * k);
+      for (const side of [1, -1]) {
+        const r = sim.deploy('archer', p.x - Math.sin(p.ang) * 70 * side, p.y + Math.cos(p.ang) * 70 * side);
+        if (r.ok) { sq = r.squad; break; }
+      }
+    }
+    const boss = sim.spawnFoe(st.boss.type, 0, true, path.len * 0.25);
+    let engaged = false;
+    for (let i = 0; i < 30 * 30 && !engaged && sim.foes.includes(boss); i++) {
+      sim.update(1 / 30);
+      engaged = boss.state === 'raid' && boss.raid === sq;
+    }
+    if (!sq || !engaged) fail(`boss engage: squad ${!!sq} engaged ${engaged} state ${boss.state}`);
+    out.checks.push({ bossEngage: engaged });
+  }
   // rewards on a first clear
   const s = defaultSave('liubei');
   const res = applyResult(s, STORIES.liubei, { stageIdx: 0, won: true, stars: 3, gate: 20, kills: 10, itemsUsed: { potion: 1 } });

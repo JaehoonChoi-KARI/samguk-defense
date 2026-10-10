@@ -54,7 +54,8 @@ export function recommendGenerals(save, waves) {
 // ---- battle autopilot -------------------------------------------------------------
 
 export class Bot {
-  constructor(sim, { callEarly = false, useSkills = true, useItems = true } = {}) {
+  constructor(sim, { callEarly = false, useSkills = true, useItems = true, bossFocus = true } = {}) {
+    this.bossFocus = bossFocus;
     this.sim = sim;
     this.t = 0;
     this.callEarly = callEarly;
@@ -146,6 +147,12 @@ export class Bot {
       sim.moveLord(p.x, p.y);
       this.posted = true;
     }
+    const boss = this.bossFocus ? sim.boss() : null;
+    if (boss && !sim.lord.dead) {
+      const p = sim.paths[boss.path];
+      const ahead = pathAt(p, Math.min(p.len - 50, Math.max(boss.d + 70, p.len * 0.55)));
+      if (Math.hypot(sim.lord.hx - ahead.x, sim.lord.hy - ahead.y) > 60 && boss.d < p.len - 60) sim.moveLord(ahead.x, ahead.y);
+    }
     // generals first: they are free
     for (const g of sim.generals) {
       if (g.state !== 'hand' || g.waitT > 0) continue;
@@ -202,6 +209,12 @@ export class Bot {
         } else if (sim.foes.length >= 6) sim.castSkill(i, 0, 0);
         return;
       }
+      const boss = this.bossFocus ? sim.boss() : null;
+      if (boss && boss.d > sim.paths[boss.path].len * 0.4) {
+        if (def.target === 'path') { const q = pathAt(sim.paths[boss.path], boss.d + 40); sim.castSkill(i, q.x, q.y); }
+        else sim.castSkill(i, boss.x, boss.y);
+        return;
+      }
       const c = this.cluster(def.radius || 80);
       if (c.at && c.n >= 4) sim.castSkill(i, c.at.x, c.at.y);
     });
@@ -209,6 +222,13 @@ export class Bot {
 
   items() {
     const sim = this.sim;
+    const boss = this.bossFocus ? sim.boss() : null;
+    if (boss) {
+      const p = sim.paths[boss.path];
+      const k = boss.d / p.len;
+      if (sim.items.bomb > 0 && k > 0.5) sim.useItem('bomb', boss.x, boss.y);
+      if (sim.items.wall > 0 && k > 0.6 && !sim.walls.length) { const q = pathAt(p, Math.min(p.len - 40, boss.d + 60)); sim.useItem('wall', q.x, q.y); }
+    }
     if (sim.items.bomb > 0) {
       const c = this.cluster(100);
       if (c.at && c.n >= 7) sim.useItem('bomb', c.at.x, c.at.y);

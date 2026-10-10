@@ -863,3 +863,4 @@ em.up.very { color: #e04e00; letter-spacing: -2px; }
 @media (max-height: 600px) {
   .inv-gen { right: calc(var(--safe-r) + 102px); width: 92px; gap: 4px; padding: 4px; }
 }
+.boss-warn { font-size: 12px; font-weight: 900; color: #fff; background: var(--red); border-radius: 8px; padding: 1px 7px; }

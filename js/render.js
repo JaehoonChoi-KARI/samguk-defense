@@ -348,6 +348,11 @@ export class BattleView {
           this.shake = Math.max(this.shake, 0.35);
           this.fx.push({ k: 'flash', t: 0, life: 0.4 });
           break;
+        case 'bossLeak':
+          this.text(e.x, e.y - 50, `적장 ${e.name} 통과!`, '#ff6b6b', 22, 2);
+          this.shake = 0.8;
+          this.fx.push({ k: 'flash', t: 0, life: 0.8 });
+          break;
         case 'counter':
           this.text(e.x + (Math.random() - 0.5) * 10, e.y, COUNTER_MARK[e.lv], e.lv > 0 ? (e.lv > 1 ? '#ff7a00' : '#ffb020') : '#9fb6d8', e.lv > 1 ? 21 : e.lv > 0 ? 16 : 14, 0.7);
           break;

@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>trace</title>
+</head>
+<body>
+<pre id="out">running...</pre>
+<script type="module">
+// Follows the enemy general through one bot battle, once a second from its arrival.
+//   ?lord=liubei&n=4&diff=1&seed=bal0&items=0
+import { STORIES } from '../js/stories.js';
+import { buildWaves } from '../js/waves.js';
+import { stageLayout } from '../js/maps.js';
+import { battleSetup } from '../js/army.js';
+import { Sim } from '../js/sim.js';
+import { Bot, expectedSave, recommendRoster, recommendGenerals } from '../js/bot.js';
+
+const P = new URLSearchParams(location.search);
+const lord = P.get('lord') || 'liubei', n = +(P.get('n') || 1), diff = +(P.get('diff') ?? 1);
+const stage = STORIES[lord].stages[n - 1];
+const s = expectedSave(lord, n, diff);
+const ws = buildWaves(stage, n, stageLayout(n).paths.length);
+s.roster = recommendRoster(s, ws);
+s.picks = recommendGenerals(s, ws);
+const sim = new Sim(battleSetup(s, n - 1, stage, { seed: P.get('seed') || 'bal0' }));
+const bot = new Bot(sim, { useItems: P.get('items') !== '0' });
+const lines = [];
+const who = a => !a ? '-' : a.kind === 'lord' ? 'lord' : `${a.kind}:${a.type || ''}${a.gen ? '(gen)' : ''}#${a.id}`;
+let next = 0;
+for (let i = 0; i < 30 * 60 * 20 && sim.state !== 'won' && sim.state !== 'lost'; i++) {
+  bot.update(1 / 30);
+  sim.update(1 / 30);
+  for (const e of sim.events) if (e.k === 'bossSkill' || e.k === 'slam' || e.k === 'bossLeak' || e.k === 'lordDown' || e.k === 'generalDown') lines.push(`${sim.time.toFixed(1)} ev ${e.k} ${e.skill || ''}`);
+  sim.events.length = 0;
+  const b = sim.boss();
+  if (b && sim.time >= next) {
+    next = sim.time + 1;
+    const len = sim.paths[b.path].len;
+    const near = sim.allies().filter(a => Math.hypot(a.x - b.x, a.y - b.y) < 150).map(who).join(' ');
+    lines.push(`${sim.time.toFixed(1)} ${b.state} d=${Math.round(b.d)}/${Math.round(len)} hp=${Math.round(100 * b.hp / b.maxHp)}% chg=${b.chargeT > 0 ? 1 : 0} blk=${who(b.blocker)} raid=${who(b.raid)} near=[${near}] squads=${sim.squads.length} food=${Math.round(sim.food)}`);
+  }
+}
+lines.push(`end ${sim.state} ${sim.lostReason || ''} t=${Math.round(sim.time)} gate=${sim.gate}`);
+document.getElementById('out').textContent = lines.join('\n');
+document.title = 'done';
+</script>
+</body>
+</html>

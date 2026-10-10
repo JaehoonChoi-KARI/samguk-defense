@@ -10,7 +10,8 @@
 // Balance measurement: a bot plays each stage with a typical save for that point of the story.
 //   ?lords=liubei,caocao,sunquan  &stages=1-20  &diff=1  &runs=1  &lvl=0 (lord levels above recommended)
 //   &troop=0 (extra troop levels)  &early=0 (call waves early)  &dump=1 (list enemies when a battle stalls)
-//   &hp=1 &atk=1 (multiply enemy hp / atk to try values)
+//   &hp=1 &atk=1 (multiply enemy hp / atk to try values)  &items=0 (bot uses no consumable items)
+//   &bosshp=1 (multiply enemy general hp)  &scd=1 (multiply lord skill cooldowns)  &gens=0 (no generals)
 import { STORIES } from '../js/stories.js';
 import { buildWaves } from '../js/waves.js';
 import { stageLayout } from '../js/maps.js';
@@ -26,12 +27,13 @@ const runs = +(P.get('runs') || 1);
 const lvl = +(P.get('lvl') || 0);
 const troop = +(P.get('troop') || 0);
 const early = P.get('early') === '1';
+const useItems = P.get('items') !== '0';
 const hpK = +(P.get('hp') || 1), atkK = +(P.get('atk') || 1);
 const rows = [];
 for (const lord of lords) {
   for (let n = a; n <= (b || a); n++) {
     const stage = STORIES[lord].stages[n - 1];
-    let won = 0, gate = 0, time = 0, lost = 0, leaked = 0, stalls = [];
+    let won = 0, gate = 0, time = 0, lost = 0, leaked = 0, bossLoss = 0, stalls = [];
     for (let r = 0; r < runs; r++) {
       const s = expectedSave(lord, n, diff, { levelBonus: lvl, troopBonus: troop });
       const ws = buildWaves(stage, n, stageLayout(n).paths.length);
@@ -39,9 +41,12 @@ for (const lord of lords) {
       s.picks = P.get('gens') === '0' ? [] : recommendGenerals(s, ws);
       const setup = battleSetup(s, n - 1, stage, { seed: `bal${r}` });
       setup.diff = { ...setup.diff, hp: setup.diff.hp * hpK, atk: setup.diff.atk * atkK };
+      if (P.has('bosshp')) setup.bossHp = +P.get('bosshp');
+      if (P.has('scd')) setup.skills.forEach(sk => { if (sk) sk.cd *= +P.get('scd'); });
       const sim = new Sim(setup);
-      autoplay(sim, { callEarly: early });
+      autoplay(sim, { callEarly: early, useItems });
       if (sim.state === 'won') won++;
+      if (sim.lostReason === 'boss') bossLoss++;
       gate += sim.gate;
       time += sim.time;
       lost += sim.stats.lost;
@@ -51,7 +56,7 @@ for (const lord of lords) {
       }
       if (sim.state === 'play') stalls.unshift('STALLED');
     }
-    rows.push({ lord, n, title: stage.title, win: won / runs, gate: +(gate / runs).toFixed(1), time: Math.round(time / runs), lost: +(lost / runs).toFixed(1), leaked: +(leaked / runs).toFixed(1), ...(stalls.length ? { stalls } : {}) });
+    rows.push({ lord, n, title: stage.title, win: won / runs, gate: +(gate / runs).toFixed(1), time: Math.round(time / runs), lost: +(lost / runs).toFixed(1), leaked: +(leaked / runs).toFixed(1), boss: bossLoss, ...(stalls.length ? { stalls } : {}) });
   }
 }
 document.getElementById('out').textContent = JSON.stringify(rows);
