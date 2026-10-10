@@ -683,3 +683,21 @@ em.up.very { color: #e04e00; letter-spacing: -2px; }
 .gpick-panel .row-btns { margin-top: 10px; flex: none; }
 .gc-skill b { font-size: 14px; }
 .ct-line .mk { min-width: 36px; letter-spacing: -1px; font-size: 13px; }
+
+.credits {
+  position: absolute; left: 50%; bottom: calc(var(--safe-b) + 10px); transform: translateX(-50%); z-index: 4;
+  font-size: 15px; font-weight: 700; color: rgba(243, 230, 196, 0.8); letter-spacing: 0.5px; white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); pointer-events: none;
+}
+
+/* ---- mouse on a PC: hover feedback ----------------------------------------------- */
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover, .tile:hover, .go-card:hover, .slot:hover, .lord-card:hover, .tbtn:hover, .pbtn:hover, .gcard:hover,
+  .gp:hover, .eq-item:hover, .diff-btn:hover, .sbtn:hover, .ibtn:hover, .hbtn:hover, .wp-call:hover,
+  .stepper button:hover, .buy:hover, .eq-tab:hover, .back-btn:hover, .tog:hover, .mini:hover, .version:hover, .aim-cancel:hover {
+    filter: brightness(1.1);
+  }
+  .slot:hover, .tile:hover, .lord-card:hover, .go-card:hover, .gcard:hover { transform: translateY(-2px); }
+  .mk:hover .mk-dot { transform: scale(1.15); }
+  .title-screen, .story { cursor: pointer; }
+}

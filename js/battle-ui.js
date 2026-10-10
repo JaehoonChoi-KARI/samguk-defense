@@ -11,6 +11,7 @@ import { battleSetup } from './army.js';
 import { troopIcon, generalIcon } from './sprites.js';
 import { sfx } from './audio.js';
 import { waveSummary } from './waves.js';
+import { tapWord, dragHow } from './device.js';
 
 function h(html) {
   const t = document.createElement('template');
@@ -212,8 +213,8 @@ export class BattleController {
     let text = '';
     if (this.tutorial === 1) text = '👆 <b>＋ 깃발</b> 자리를 눌러 부대를 배치하세요. 부대는 군량🌾이 들고, <b>장수</b>는 무료예요.';
     else if (this.tutorial === 2) text = '좋아요! 부대를 하나 더 배치하고, 준비가 되면 위의 <b>⚔ 전투 시작!</b>을 누르세요.';
-    else if (this.tutorial === 3) text = '👆 <b>군주</b>를 손가락으로 끌어서 옮길 수 있어요. 군주도 직접 싸워요!';
-    else if (this.tutorial === 4) text = '오른쪽 아래 <b>스킬</b>, 왼쪽 아래 <b>아이템</b>을 눌러 보세요. 위치를 고르는 건 화면을 터치!';
+    else if (this.tutorial === 3) text = `👆 <b>군주</b>를 ${dragHow()} 끌어서 옮길 수 있어요. 군주도 직접 싸워요!`;
+    else if (this.tutorial === 4) text = `오른쪽 아래 <b>스킬</b>, 왼쪽 아래 <b>아이템</b>을 눌러 보세요. 위치를 고르는 건 화면을 ${tapWord()}!`;
     else if (this.tutorial === 5) text = '배치한 부대를 누르면 <b>승급</b>(더 강하게)하거나 <b>철수</b>할 수 있어요.';
     el.innerHTML = text;
     el.classList.toggle('hidden', !text);
@@ -236,8 +237,15 @@ export class BattleController {
   bindInput() {
     const cv = this.game.canvas;
     this.ptr = null;
+    this.cursor = '';
     this.onDown = e => {
       if (this.game.paused || this.ended) return;
+      if (e.pointerType === 'mouse') {
+        // right click backs out of aiming or a menu; only the left button plays
+        if (e.button === 2) { e.preventDefault(); this.cancelAction(); return; }
+        if (e.button !== 0) return;
+        this.ptr = null; // a mouse has one pointer: drop a press whose release was missed
+      }
       if (this.ptr) return;
       e.preventDefault();
       const w = this.view.toWorld(e.clientX, e.clientY);
@@ -254,11 +262,15 @@ export class BattleController {
         this.ptr.mode = 'lord';
         this.closePopup();
         this.ui.lordDrag = { x: L.x, y: L.y };
+        this.setCursor('grabbing');
       }
     };
     this.onMove = e => {
       const p = this.ptr;
-      if (!p || p.id !== e.pointerId) return;
+      if (!p || p.id !== e.pointerId) {
+        if (!p && e.pointerType === 'mouse') this.hover(e);
+        return;
+      }
       const w = this.view.toWorld(e.clientX, e.clientY);
       if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 10) p.moved = true;
       p.w = w;
@@ -274,6 +286,7 @@ export class BattleController {
       if (p.mode === 'aim') { this.fireAim(w); return; }
       if (p.mode === 'lord') {
         this.ui.lordDrag = null;
+        this.setCursor('grab');
         if (p.moved) {
           this.sim.moveLord(w.x, w.y);
           sfx.select();
@@ -283,10 +296,56 @@ export class BattleController {
       }
       this.tap(w);
     };
+    this.onLeave = () => {
+      this.ui.hover = null;
+      if (this.ui.aim && !this.ptr) { this.ui.aim.x = undefined; this.ui.aim.y = undefined; }
+    };
+    // Esc on a PC keyboard: back out of aiming or a menu, otherwise pause
+    this.onKey = e => {
+      if (e.key !== 'Escape' || this.ended) return;
+      if (this.ui.aim || this.popupKind) this.cancelAction();
+      else if (!this.game.paused) this.game.pause();
+    };
     cv.addEventListener('pointerdown', this.onDown);
     cv.addEventListener('pointermove', this.onMove);
     cv.addEventListener('pointerup', this.onUp);
     cv.addEventListener('pointercancel', this.onUp);
+    cv.addEventListener('pointerleave', this.onLeave);
+    window.addEventListener('keydown', this.onKey);
+  }
+
+  // Mouse only: the aiming circle follows the pointer, things you can click get a hand cursor.
+  hover(e) {
+    if (this.game.paused || this.ended) return;
+    const w = this.view.toWorld(e.clientX, e.clientY);
+    let cursor = 'default';
+    let hov = null;
+    if (this.ui.aim) {
+      this.ui.aim.x = w.x;
+      this.ui.aim.y = w.y;
+      cursor = 'crosshair';
+    } else {
+      const L = this.sim.lord;
+      if (!L.dead && Math.hypot(w.x - L.x, w.y - (L.y - 20)) < LORD_TAP) cursor = 'grab';
+      else {
+        const sq = this.squadAt(w);
+        const spot = sq ? this.sim.spots[sq.spot] : this.spotAt(w);
+        if (spot) { cursor = 'pointer'; hov = spot.id; }
+      }
+    }
+    this.ui.hover = hov;
+    this.setCursor(cursor);
+  }
+
+  setCursor(c) {
+    if (this.cursor === c) return;
+    this.cursor = c;
+    this.game.canvas.style.cursor = c;
+  }
+
+  cancelAction() {
+    if (this.ui.aim) { this.setAim(null); sfx.select(); }
+    else if (this.popupKind) { this.closePopup(); sfx.select(); }
   }
 
   destroy() {
@@ -295,6 +354,9 @@ export class BattleController {
     cv.removeEventListener('pointermove', this.onMove);
     cv.removeEventListener('pointerup', this.onUp);
     cv.removeEventListener('pointercancel', this.onUp);
+    cv.removeEventListener('pointerleave', this.onLeave);
+    window.removeEventListener('keydown', this.onKey);
+    cv.style.cursor = '';
     clearTimeout(this.bannerT);
     clearTimeout(this.toastT);
     this.root.innerHTML = '';
@@ -545,7 +607,7 @@ export class BattleController {
       return;
     }
     this.closePopup();
-    this.setAim({ kind: 'skill', i, r: def.radius || def.width || 60, label: `${def.icon} ${def.name}: ${def.target === 'path' ? '길 위를' : '위치를'} 터치하세요` });
+    this.setAim({ kind: 'skill', i, r: def.radius || def.width || 60, label: `${def.icon} ${def.name}: ${def.target === 'path' ? '길 위를' : '위치를'} ${tapWord()}하세요` });
     sfx.select();
   }
 
@@ -567,7 +629,7 @@ export class BattleController {
     if (!(this.sim.items[k] > 0)) { sfx.denied(); this.toast(`${ITEMS[k].name}이(가) 없어요. 정비에서 챙겨 오세요`); return; }
     this.closePopup();
     const def = ITEMS[k];
-    this.setAim({ kind: 'item', k, r: def.radius || 40, label: `${def.icon} ${def.name}: ${k === 'wall' ? '길 위를' : '위치를'} 터치하세요` });
+    this.setAim({ kind: 'item', k, r: def.radius || 40, label: `${def.icon} ${def.name}: ${k === 'wall' ? '길 위를' : '위치를'} ${tapWord()}하세요` });
     sfx.select();
   }
 

@@ -19,6 +19,7 @@ import { troopIcon, lordIcon, generalIcon } from './sprites.js';
 import { drawChinaMap, mapFit } from './chinamap.js';
 import { recommendRoster, recommendGenerals } from './bot.js';
 import { sfx } from './audio.js';
+import { hasMouse } from './device.js';
 
 function h(html) {
   const t = document.createElement('template');
@@ -99,9 +100,10 @@ function titleScreen(game) {
         <h1 class="logo">천하통일 디펜스</h1>
         <p class="sub">군주가 되어 진지를 지키고, 천하를 통일하자!</p>
         <div class="title-lords">${LORD_KEYS.map(k => `<img src="${lordIcon(k, 120)}" alt="">`).join('')}</div>
-        <div class="press">👆 화면을 터치해서 시작</div>
+        <div class="press">${hasMouse() ? '🖱️ 클릭해서 시작' : '👆 화면을 터치해서 시작'}</div>
         ${ios && !installed ? '<p class="install">📲 Safari 공유 버튼 → <b>홈 화면에 추가</b> 하면 앱처럼 쓸 수 있어요</p>' : ''}
       </div>
+      <div class="credits">기획: J.W. Choi · 개발: Claude</div>
       <button class="version" type="button">v${VERSION} · ↻ 업데이트 확인</button>
     </div>`);
   el.appendChild(soundToggles(game));

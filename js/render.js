@@ -495,7 +495,7 @@ export class BattleView {
 
     // spots
     for (const s of sim.spots) {
-      const hl = ui.spot === s.id || (ui.squad && ui.squad.spot === s.id);
+      const hl = ui.spot === s.id || ui.hover === s.id || (ui.squad && ui.squad.spot === s.id);
       drawSpot(ctx, s.x, s.y, { empty: !s.squad, flag: !!s.squad && TROOPS[s.squad.type].melee, hl, color: this.us.color });
       if (s.squad && TROOPS[s.squad.type].melee) {
         // melee squads stand on the road; a faint line shows which flag they belong to

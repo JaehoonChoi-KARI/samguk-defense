@@ -185,6 +185,28 @@ async function uiFlow(game) {
     fire('pointerup', c.x, c.y);
   }
   step('skill');
+  // the same battle with a mouse
+  const mouse = (type, x, y, button = 0) => game.canvas.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, pointerId: 1, bubbles: true, pointerType: 'mouse', button, buttons: type === 'pointerup' ? 0 : 1 }));
+  const free = b.sim.spots.find(sp => !sp.squad);
+  const fp = b.view.toScreen(free.x, free.y);
+  mouse('pointermove', fp.x, fp.y);
+  if (b.ui.hover !== free.id || game.canvas.style.cursor !== 'pointer') fail(`mouse hover: ${b.ui.hover} ${game.canvas.style.cursor}`);
+  tap(q('.ibtn[data-k="bomb"]'));
+  if (!b.ui.aim) fail('mouse: aim did not start');
+  mouse('pointermove', fp.x + 40, fp.y);
+  if (b.ui.aim && b.ui.aim.x === undefined) fail('mouse: aim circle does not follow the pointer');
+  mouse('pointerdown', fp.x + 40, fp.y, 2);
+  if (b.ui.aim) fail('mouse: right click did not cancel aiming');
+  mouse('pointerdown', fp.x, fp.y);
+  mouse('pointerup', fp.x, fp.y);
+  await waitFor(() => !q('.popup').classList.contains('hidden'));
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  if (!q('.popup').classList.contains('hidden')) fail('Esc did not close the menu');
+  mouse('pointerdown', fp.x, fp.y);
+  mouse('pointerup', fp.x, fp.y);
+  await waitFor(() => !q('.popup').classList.contains('hidden'));
+  tap(q('.tbtn:not(.gbtn)'));
+  step('mouse');
   // let the bot finish the fight quickly
   const bot = new Bot(b.sim, { callEarly: true });
   let guard = 0;
