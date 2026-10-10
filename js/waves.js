@@ -1,0 +1,82 @@
+// Enemy waves for a stage, generated from the story's troop mix. Seeded by the stage id,
+// so the same stage always brings the same army (the scouting report stays true).
+
+import { TROOP_KEYS } from './data.js';
+
+export function rng(seed) {
+  let s = 0;
+  for (const ch of String(seed)) s = (s * 31 + ch.charCodeAt(0)) >>> 0;
+  s = s || 1;
+  return () => {
+    s ^= s << 13; s >>>= 0;
+    s ^= s >>> 17;
+    s ^= s << 5; s >>>= 0;
+    return s / 4294967296;
+  };
+}
+
+// How much of the wave budget one soldier uses up.
+const WEIGHT = { infantry: 1, spear: 1, archer: 1, cavalry: 1.5, strategist: 1.6, catapult: 3 };
+// Seconds between soldiers of one group.
+const GAP = { infantry: 1.0, spear: 1.0, archer: 1.1, cavalry: 0.8, strategist: 1.4, catapult: 2.6 };
+
+export const waveCount = n => 4 + Math.floor((n - 1) / 4); // 4..8
+export const waveBudget = (n, i, w) => (5 + 1.0 * n) * (0.75 + 0.55 * (w > 1 ? i / (w - 1) : 1));
+
+function pick(r, weights) {
+  const total = weights.reduce((s, [, w]) => s + w, 0);
+  let x = r() * total;
+  for (const [k, w] of weights) { x -= w; if (x <= 0) return k; }
+  return weights[weights.length - 1][0];
+}
+
+// Returns [{ groups: [{ type, count, path, gap, at }], boss: bool }]
+// `at` = seconds after the wave starts when the group begins marching.
+export function buildWaves(stage, n, pathCount) {
+  const r = rng(stage.id);
+  const mix = Object.entries(stage.mix || { infantry: 1 }).filter(([k, w]) => TROOP_KEYS.includes(k) && w > 0);
+  const W = waveCount(n);
+  const waves = [];
+  for (let i = 0; i < W; i++) {
+    let budget = waveBudget(n, i, W);
+    // Each wave leans on one main type so the next-wave preview matters.
+    const main = i === 0 ? mix.slice().sort((a, b) => b[1] - a[1])[0][0] : pick(r, mix);
+    const counts = {};
+    while (budget > 0.5) {
+      const t = r() < 0.55 ? main : pick(r, mix);
+      counts[t] = (counts[t] || 0) + 1;
+      budget -= WEIGHT[t];
+    }
+    const groups = [];
+    let at = 0;
+    const order = Object.keys(counts).sort((a, b) => (a === main ? -1 : b === main ? 1 : 0));
+    let gi = 0;
+    for (const t of order) {
+      let left = counts[t];
+      while (left > 0) {
+        const size = Math.min(left, t === 'catapult' ? 2 : 3 + Math.floor(r() * 4));
+        const path = pathCount > 1 ? (gi + i) % pathCount : 0;
+        groups.push({ type: t, count: size, path, gap: GAP[t], at: Math.round(at * 10) / 10 });
+        at += size * GAP[t] * 0.7 + 1.5 + r() * 1.5;
+        left -= size;
+        gi++;
+      }
+    }
+    waves.push({ groups, boss: i === W - 1, length: at });
+  }
+  return waves;
+}
+
+// Soldiers per type in one wave, for the preview panel.
+export function waveSummary(wave) {
+  const out = {};
+  for (const g of wave.groups) out[g.type] = (out[g.type] || 0) + g.count;
+  return out;
+}
+
+// Soldiers per type over the whole stage, for the scouting report.
+export function stageSummary(waves) {
+  const out = {};
+  for (const w of waves) for (const [t, c] of Object.entries(waveSummary(w))) out[t] = (out[t] || 0) + c;
+  return out;
+}

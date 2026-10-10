@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>balance</title>
+</head>
+<body>
+<pre id="out">running...</pre>
+<script type="module">
+// Balance measurement: a bot plays each stage with a typical save for that point of the story.
+//   ?lords=liubei,caocao,sunquan  &stages=1-20  &diff=1  &runs=1  &lvl=0 (lord levels above recommended)
+//   &troop=0 (extra troop levels)  &early=0 (call waves early)  &dump=1 (list enemies when a battle stalls)
+//   &hp=1 &atk=1 (multiply enemy hp / atk to try values)
+import { STORIES } from '../js/stories.js';
+import { buildWaves } from '../js/waves.js';
+import { stageLayout } from '../js/maps.js';
+import { battleSetup } from '../js/army.js';
+import { Sim } from '../js/sim.js';
+import { autoplay, expectedSave, recommendRoster, recommendGenerals } from '../js/bot.js';
+
+const P = new URLSearchParams(location.search);
+const lords = (P.get('lords') || 'liubei,caocao,sunquan').split(',');
+const [a, b] = (P.get('stages') || '1-20').split('-').map(Number);
+const diff = +(P.get('diff') ?? 1);
+const runs = +(P.get('runs') || 1);
+const lvl = +(P.get('lvl') || 0);
+const troop = +(P.get('troop') || 0);
+const early = P.get('early') === '1';
+const hpK = +(P.get('hp') || 1), atkK = +(P.get('atk') || 1);
+const rows = [];
+for (const lord of lords) {
+  for (let n = a; n <= (b || a); n++) {
+    const stage = STORIES[lord].stages[n - 1];
+    let won = 0, gate = 0, time = 0, lost = 0, leaked = 0, stalls = [];
+    for (let r = 0; r < runs; r++) {
+      const s = expectedSave(lord, n, diff, { levelBonus: lvl, troopBonus: troop });
+      const ws = buildWaves(stage, n, stageLayout(n).paths.length);
+      s.roster = recommendRoster(s, ws);
+      s.picks = P.get('gens') === '0' ? [] : recommendGenerals(s, ws);
+      const setup = battleSetup(s, n - 1, stage, { seed: `bal${r}` });
+      setup.diff = { ...setup.diff, hp: setup.diff.hp * hpK, atk: setup.diff.atk * atkK };
+      const sim = new Sim(setup);
+      autoplay(sim, { callEarly: early });
+      if (sim.state === 'won') won++;
+      gate += sim.gate;
+      time += sim.time;
+      lost += sim.stats.lost;
+      leaked += sim.stats.leaked;
+      if (sim.state === 'play' && P.has('dump')) {
+        stalls = sim.foes.map(f => `${f.type}${f.boss ? '(boss)' : ''} ${f.state} d=${Math.round(f.d)}/${Math.round(sim.paths[f.path].len)} xy=${Math.round(f.x)},${Math.round(f.y)} hp=${Math.round(f.hp)} blk=${f.blocker?.kind || '-'} raid=${f.raid ? f.raid.type : '-'}`);
+      }
+      if (sim.state === 'play') stalls.unshift('STALLED');
+    }
+    rows.push({ lord, n, title: stage.title, win: won / runs, gate: +(gate / runs).toFixed(1), time: Math.round(time / runs), lost: +(lost / runs).toFixed(1), leaked: +(leaked / runs).toFixed(1), ...(stalls.length ? { stalls } : {}) });
+  }
+}
+document.getElementById('out').textContent = JSON.stringify(rows);
+document.title = 'done';
+</script>
+</body>
+</html>

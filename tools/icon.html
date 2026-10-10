@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>icon</title>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block;width:100vw;height:100vh}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+// App icon renderer: screenshot this page at 512x512 / 192x192 / 180x180.
+import { drawLord } from '../js/sprites.js';
+
+const c = document.getElementById('c');
+const n = Math.min(innerWidth, innerHeight);
+c.width = c.height = n;
+const ctx = c.getContext('2d');
+const g = ctx.createRadialGradient(n * 0.5, n * 0.35, n * 0.05, n * 0.5, n * 0.5, n * 0.75);
+g.addColorStop(0, '#d8433a');
+g.addColorStop(0.6, '#8c1a14');
+g.addColorStop(1, '#3a1208');
+ctx.fillStyle = g;
+ctx.fillRect(0, 0, n, n);
+// gold ring
+ctx.strokeStyle = 'rgba(242,193,78,0.85)';
+ctx.lineWidth = n * 0.03;
+ctx.beginPath();
+ctx.arc(n / 2, n / 2, n * 0.43, 0, Math.PI * 2);
+ctx.stroke();
+// big character behind
+ctx.fillStyle = 'rgba(242,193,78,0.22)';
+ctx.font = `900 ${n * 0.62}px "Malgun Gothic", sans-serif`;
+ctx.textAlign = 'center';
+ctx.textBaseline = 'middle';
+ctx.fillText('天', n / 2, n * 0.47);
+// three lords
+const s = n / 150;
+ctx.save();
+ctx.scale(s, s);
+drawLord(ctx, 'sunquan', 103, 110, { noBanner: true, scale: 1.05, face: -1 });
+drawLord(ctx, 'caocao', 47, 110, { noBanner: true, scale: 1.05 });
+drawLord(ctx, 'liubei', 75, 122, { noBanner: true, scale: 1.25 });
+ctx.restore();
+document.title = 'ready';
+</script>
+</body>
+</html>
