@@ -6,8 +6,45 @@ let enabled = true;
 let noiseBuf = null;
 const lastPlay = {};
 
+const readyFns = [];
+let primed = false;
+let silentEl = null;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+// Called once the audio context is really running (the music waits for this).
+export function onAudioReady(fn) { readyFns.push(fn); }
+function fireReady() {
+  if (ctx && ctx.state === 'running') for (const fn of readyFns) { try { fn(); } catch { /* ignore */ } }
+}
+
+// An endless silent <audio> element: on older iPadOS this moves the page into the
+// "playback" audio session so the silent/mute setting does not silence the game.
+function silentLoop() {
+  if (silentEl) { if (silentEl.paused) silentEl.play().catch(() => {}); return; }
+  const rate = 8000, n = rate; // one second of 8-bit silence
+  const buf = new ArrayBuffer(44 + n);
+  const v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+  str(36, 'data'); v.setUint32(40, n, true);
+  for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
+  silentEl = document.createElement('audio');
+  silentEl.setAttribute('playsinline', '');
+  silentEl.setAttribute('x-webkit-airplay', 'deny');
+  silentEl.loop = true;
+  silentEl.preload = 'auto';
+  silentEl.src = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  silentEl.play().catch(() => {});
+}
+
+// Must run inside a touch/click handler: creates or wakes the audio context.
 export function unlockAudio() {
   try {
+    // iPad/iPhone: play like a game or video app, even with the silent/mute setting on.
+    if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback';
+    else if (isIOS && !navigator.audioSession) silentLoop();
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
@@ -15,10 +52,25 @@ export function unlockAudio() {
       master = ctx.createGain();
       master.gain.value = 0.32;
       master.connect(ctx.destination);
+      ctx.onstatechange = fireReady;
     }
-    if (ctx.state === 'suspended') ctx.resume();
+    // 'suspended' before the first touch, 'interrupted' on iOS after leaving the app
+    if (ctx.state !== 'running') ctx.resume().then(fireReady).catch(() => {});
+    if (!primed) {
+      // a one-sample sound inside the touch fully opens the output on iOS
+      const b = ctx.createBuffer(1, 1, 22050);
+      const s = ctx.createBufferSource();
+      s.buffer = b;
+      s.connect(ctx.destination);
+      s.start(0);
+      primed = true;
+    }
+    fireReady();
   } catch { /* sound is optional */ }
 }
+
+// iOS stops the context when the app goes to the background; this lets it be woken again.
+export const audioState = () => (ctx ? ctx.state : 'none');
 
 export function setSoundEnabled(on) { enabled = on; }
 
@@ -108,3 +160,6 @@ export const sfx = {
   squadDown() { if (ready('sdown', 0.2)) arp([392, 330, 262], 0.08, { type: 'triangle', vol: 0.12 }); },
   stone() { if (ready('stone', 0.12)) noise(0.15, { vol: 0.12, freq: 500, to: 200 }); },
 };
+
+// For the automated test: exercises the silent-loop fallback used on older iPadOS.
+export function testSilentLoop() { silentLoop(); return !!silentEl; }

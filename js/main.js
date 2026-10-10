@@ -252,6 +252,7 @@ function boot() {
   const unlock = () => { unlockAudio(); setTimeout(resumeMusic, 50); };
   window.addEventListener('pointerdown', unlock, true);
   window.addEventListener('touchend', unlock, { passive: true });
+  window.addEventListener('click', unlock, true);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       game.pause();

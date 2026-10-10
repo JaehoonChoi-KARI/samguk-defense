@@ -5,7 +5,7 @@
 // previous note one more step, '.' is a rest. Drum lines: K kick, T taiko, S rim/snare,
 // h hi-hat, '.' nothing.
 
-import { audioCtx } from './audio.js';
+import { audioCtx, onAudioReady } from './audio.js';
 
 const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 const midi = tok => {
@@ -159,6 +159,7 @@ export function playJingle(name) {
 export function resumeMusic() {
   if (enabled && wanted && (!cur || cur.name !== wanted)) start(wanted);
 }
+onAudioReady(resumeMusic);
 
 function stopNow() {
   if (!cur) return;
@@ -181,7 +182,7 @@ function start(name) {
   if (!track) return;
   const g = ctx.createGain();
   g.gain.setValueAtTime(0, ctx.currentTime);
-  g.gain.linearRampToValueAtTime(0.16, ctx.currentTime + 0.8);
+  g.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.8);
   g.connect(ctx.destination);
   const len = Math.max(...track.voices.map(v => v.len));
   cur = { name, gain: g, t0: ctx.currentTime + 0.1, step: 0, spb: 60 / track.bpm / 2, track, len };
@@ -310,3 +311,6 @@ function hit(ctx, out, t, dur, vol, type, f) {
 }
 
 export const MUSIC_TRACKS = Object.keys(TRACKS);
+
+// Name of the tune playing now, or null (for the automated test).
+export const musicNow = () => (cur ? cur.name : null);

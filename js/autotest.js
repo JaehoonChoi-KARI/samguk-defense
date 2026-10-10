@@ -12,8 +12,8 @@ import { Sim } from './sim.js';
 import { autoplay, expectedSave, recommendRoster, recommendGenerals, Bot } from './bot.js';
 import { defaultSave } from './save.js';
 import { applyResult } from './progression.js';
-import { unlockAudio, audioCtx, sfx } from './audio.js';
-import { playMusic, playJingle, stopMusic, MUSIC_TRACKS } from './music.js';
+import { unlockAudio, audioCtx, sfx, testSilentLoop } from './audio.js';
+import { playMusic, playJingle, stopMusic, MUSIC_TRACKS, musicNow } from './music.js';
 
 const out = { ok: true, errors: [], checks: [], battles: [], flow: [] };
 const fail = msg => { out.ok = false; out.errors.push(msg); };
@@ -270,11 +270,16 @@ export async function run({ game, params }) {
 // Plays every tune for a moment (the browser must allow audio without a tap:
 // --autoplay-policy=no-user-gesture-required).
 async function musicCheck() {
+  // the title music is asked for before any touch, like on a real start
+  playMusic('title');
+  if (musicNow()) fail('music started before the audio unlock');
   unlockAudio();
-  await sleep(100);
+  if (!testSilentLoop()) fail('silent loop');
+  await sleep(300);
   const ctx = audioCtx();
-  out.checks.push({ audio: ctx ? ctx.state : 'none' });
+  out.checks.push({ audio: ctx ? ctx.state : 'none', afterUnlock: musicNow() });
   if (!ctx || ctx.state !== 'running') return;
+  if (musicNow() !== 'title') fail(`title music did not start after the unlock (${musicNow()})`);
   for (const t of MUSIC_TRACKS) {
     playMusic(t);
     await sleep(700);
