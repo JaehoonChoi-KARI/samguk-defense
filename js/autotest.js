@@ -5,7 +5,7 @@
 
 import { STORIES } from './stories.js';
 import { TROOP_KEYS, LORD_KEYS, EQUIPS, FACTIONS, STAGE_COUNT, BOSS_SKILLS, TROOP_UNLOCK, GENERALS } from './data.js';
-import { PLACES, stageLayout } from './maps.js';
+import { PLACES, stageLayout, pathAt } from './maps.js';
 import { buildWaves } from './waves.js';
 import { battleSetup } from './army.js';
 import { Sim } from './sim.js';
@@ -161,26 +161,50 @@ async function uiFlow(game) {
   await waitFor(() => game.battle);
   step('battle');
   const b = game.battle;
-  // open a spot menu with a real tap on the canvas, then deploy from the menu
-  const spot = b.sim.spots[0];
-  const p = b.view.toScreen(spot.x, spot.y);
-  const fire = (type, x, y) => game.canvas.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, pointerId: 7, bubbles: true, pointerType: 'touch' }));
   b.render(game.canvas.getContext('2d'), game.view, 0); // make sure the view has its transform
-  const p2 = b.view.toScreen(spot.x, spot.y);
-  fire('pointerdown', p2.x, p2.y);
-  fire('pointerup', p2.x, p2.y);
-  await waitFor(() => !q('.popup').classList.contains('hidden'));
-  tap(q('.tbtn'));
-  if (!spot.squad) fail('deploy from spot menu');
+  const fire = (type, x, y, el = game.canvas) => el.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, pointerId: 7, bubbles: true, pointerType: 'touch', button: 0, buttons: type === 'pointerup' ? 0 : 1 }));
+  const finder = new Bot(b.sim, {}); // the bot's list of places beside the road
+  const freeFor = type => finder.pickPos(type, b.setup.troops[type]?.range || 100);
+  const center = el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+  // 1) tap a troop in the list, then press, slide and let go on the map
+  const card = q('.icard[data-t]');
+  const t = card.dataset.t;
+  const cc = center(card);
+  fire('pointerdown', cc.x, cc.y, card);
+  fire('pointerup', cc.x, cc.y, card);
+  if (!b.sel || b.sel.type !== t) fail('picking a troop in the list');
+  const pos = freeFor(t);
+  const sp = b.view.toScreen(pos.x, pos.y);
+  fire('pointerdown', sp.x - 40, sp.y + 30);
+  fire('pointermove', sp.x, sp.y);
+  if (!b.ui.ghost || !b.ui.ghost.ok) fail('no see-through unit while pressing');
+  fire('pointerup', sp.x, sp.y);
+  if (b.sim.squads.length !== 1 || b.sel) fail('placing by press and release');
   step('deploy');
-  // place a general from the menu of another empty spot
-  const spot2 = b.sim.spots.find(sp => !sp.squad);
-  const p3 = b.view.toScreen(spot2.x, spot2.y);
-  fire('pointerdown', p3.x, p3.y);
-  fire('pointerup', p3.x, p3.y);
-  await waitFor(() => !q('.popup').classList.contains('hidden'));
-  tap(q('.gbtn'));
-  if (!b.sim.squads.some(sq => sq.gen)) fail('deploy general');
+  // 2) the road is refused
+  fire('pointerdown', cc.x, cc.y, card);
+  fire('pointerup', cc.x, cc.y, card);
+  const road = pathAt(b.sim.paths[0], b.sim.paths[0].len * 0.5);
+  const rs = b.view.toScreen(road.x, road.y);
+  fire('pointerdown', rs.x, rs.y);
+  if (!b.ui.ghost || b.ui.ghost.ok) fail('the road should show a red preview');
+  fire('pointerup', rs.x, rs.y);
+  if (b.sim.squads.length !== 1) fail('placed on the road');
+  b.select(null);
+  step('noRoad');
+  // 3) drag a general out of the list onto the map
+  const gcard = q('.icard.gen');
+  const gk = gcard.dataset.g;
+  const gtype = b.sim.generals.find(x => x.key === gk).type;
+  const gpos = freeFor(gtype);
+  const gs = b.view.toScreen(gpos.x, gpos.y);
+  const gc = center(gcard);
+  fire('pointerdown', gc.x, gc.y, gcard);
+  fire('pointermove', gc.x - 40, gc.y, gcard);
+  fire('pointermove', gs.x, gs.y, gcard);
+  if (!b.ui.ghost) fail('dragging a general shows no preview');
+  fire('pointerup', gs.x, gs.y, gcard);
+  if (b.sim.generals.find(x => x.key === gk).state !== 'field') fail('dragging a general onto the map');
   step('general');
   // drag the lord
   const L = b.sim.lord;
@@ -202,26 +226,54 @@ async function uiFlow(game) {
   step('skill');
   // the same battle with a mouse
   const mouse = (type, x, y, button = 0) => game.canvas.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, pointerId: 1, bubbles: true, pointerType: 'mouse', button, buttons: type === 'pointerup' ? 0 : 1 }));
-  const free = b.sim.spots.find(sp => !sp.squad);
-  const fp = b.view.toScreen(free.x, free.y);
-  mouse('pointermove', fp.x, fp.y);
-  if (b.ui.hover !== free.id || game.canvas.style.cursor !== 'pointer') fail(`mouse hover: ${b.ui.hover} ${game.canvas.style.cursor}`);
-  tap(q('.ibtn[data-k="bomb"]'));
-  if (!b.ui.aim) fail('mouse: aim did not start');
-  mouse('pointermove', fp.x + 40, fp.y);
-  if (b.ui.aim && b.ui.aim.x === undefined) fail('mouse: aim circle does not follow the pointer');
-  mouse('pointerdown', fp.x + 40, fp.y, 2);
-  if (b.ui.aim) fail('mouse: right click did not cancel aiming');
-  mouse('pointerdown', fp.x, fp.y);
-  mouse('pointerup', fp.x, fp.y);
+  const card2 = q('.icard[data-t]:not(.none)');
+  const t2 = card2.dataset.t;
+  tap(card2); // a click picks without dragging (pointer events below are what the game listens to)
+  const c2 = center(card2);
+  card2.dispatchEvent(new PointerEvent('pointerdown', { clientX: c2.x, clientY: c2.y, pointerId: 2, bubbles: true, pointerType: 'mouse', button: 0, buttons: 1 }));
+  card2.dispatchEvent(new PointerEvent('pointerup', { clientX: c2.x, clientY: c2.y, pointerId: 2, bubbles: true, pointerType: 'mouse', button: 0, buttons: 0 }));
+  if (!b.sel) fail('mouse: picking in the list');
+  const mpos = freeFor(t2);
+  const mp = b.view.toScreen(mpos.x, mpos.y);
+  mouse('pointermove', mp.x, mp.y);
+  if (!b.ui.ghost || game.canvas.style.cursor !== 'crosshair') fail('mouse: preview does not follow the pointer');
+  mouse('pointerdown', mp.x, mp.y, 2);
+  if (b.sel) fail('mouse: right click did not cancel placing');
+  card2.dispatchEvent(new PointerEvent('pointerdown', { clientX: c2.x, clientY: c2.y, pointerId: 2, bubbles: true, pointerType: 'mouse', button: 0, buttons: 1 }));
+  card2.dispatchEvent(new PointerEvent('pointerup', { clientX: c2.x, clientY: c2.y, pointerId: 2, bubbles: true, pointerType: 'mouse', button: 0, buttons: 0 }));
+  const before = b.sim.squads.length;
+  mouse('pointerdown', mp.x, mp.y);
+  mouse('pointerup', mp.x, mp.y);
+  if (b.sim.squads.length !== before + 1) fail('mouse: click to place');
+  const placed = b.sim.squads[b.sim.squads.length - 1];
+  const pp = b.view.toScreen(placed.hx, placed.hy - 10);
+  mouse('pointermove', pp.x, pp.y);
+  if (game.canvas.style.cursor !== 'pointer') fail('mouse: no hand cursor over a unit');
+  mouse('pointerdown', pp.x, pp.y);
+  mouse('pointerup', pp.x, pp.y);
   await waitFor(() => !q('.popup').classList.contains('hidden'));
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
   if (!q('.popup').classList.contains('hidden')) fail('Esc did not close the menu');
-  mouse('pointerdown', fp.x, fp.y);
-  mouse('pointerup', fp.x, fp.y);
-  await waitFor(() => !q('.popup').classList.contains('hidden'));
-  tap(q('.tbtn:not(.gbtn)'));
+  tap(q('.ibtn[data-k="bomb"]'));
+  if (!b.ui.aim) fail('mouse: aim did not start');
+  mouse('pointermove', mp.x + 40, mp.y);
+  if (b.ui.aim && b.ui.aim.x === undefined) fail('mouse: aim circle does not follow the pointer');
+  mouse('pointerdown', mp.x + 40, mp.y, 2);
+  if (b.ui.aim) fail('mouse: right click did not cancel aiming');
   step('mouse');
+  // a general's info box from its card: move it somewhere else
+  tap(q(`.icard.gen[data-g="${gk}"] .ic-info`));
+  if (q('.gen-info').classList.contains('hidden') || !q('.gen-info .pop-skill')) fail('general info did not open');
+  tap(q('.gi-act'));
+  if (!b.sel || b.sel.key !== gk) fail('moving a general did not start');
+  for (let k = 0; k < 150; k++) b.sim.update(1 / 30); // the short wait after picking a general up
+  const gpos2 = freeFor(gtype);
+  const g2 = b.view.toScreen(gpos2.x, gpos2.y);
+  fire('pointerdown', g2.x, g2.y);
+  fire('pointerup', g2.x, g2.y);
+  const gen = b.sim.generals.find(x => x.key === gk);
+  if (gen.state !== 'field' || b.sel) fail(`general not moved (${gen.state}, wait ${gen.waitT})`);
+  step('genHud');
   // let the bot finish the fight quickly
   const bot = new Bot(b.sim, { callEarly: true });
   let guard = 0;
@@ -290,9 +342,15 @@ async function shot(game, name, params) {
       b.sim.events = [];
       guard++;
     }
-    if (params.has('menu')) b.openSpot(b.sim.spots.find(sp => !sp.squad) || b.sim.spots[0]);
+    if (params.has('place') || params.has('menu')) {
+      const ty = Object.keys(b.setup.roster).find(k => b.sim.roster[k] > 0) || 'infantry';
+      b.select({ kind: 'troop', type: ty });
+      const pos = bot.pickPos(ty, b.setup.troops[ty].range);
+      if (pos) b.ghostAt(pos);
+    }
     if (params.has('squad')) b.openSquad(b.sim.squads[0]);
     if (params.has('aim')) b.onSkill(2);
+    if (params.has('geninfo')) b.toggleGenInfo(b.sim.generals[0].key);
     b.render(game.canvas.getContext('2d'), game.view, 0.016);
     game.paused = true; // freeze the frame (no pause menu)
   }

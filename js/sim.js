@@ -5,7 +5,7 @@
 import {
   TROOPS, FOES, STAR_MULT, STAR_RANGE, STAR_COST, RETREAT_REFUND, GATE_HP, counterMult, counterLevel, BOSS,
   SKILLS, ITEMS, stageHpMult, stageAtkMult, killFood, PASSIVE_FOOD, TROOP_KEYS, diffScale,
-  GENERALS, GEN_SPECIALS, GENERAL_RECOVER, GENERAL_MOVE_WAIT,
+  GENERALS, GEN_SPECIALS, GENERAL_RECOVER, GENERAL_MOVE_WAIT, PLACE_GAP, ROAD_CLEAR,
 } from './data.js';
 import { pathAt, nearestOnPaths, WORLD_W, WORLD_H } from './maps.js';
 import { rng } from './waves.js';
@@ -39,7 +39,8 @@ export class Sim {
     this.items = { ...setup.items };
     this.itemsUsed = { potion: 0, bomb: 0, wall: 0 };
 
-    this.spots = setup.layout.spots.map(s => ({ ...s, squad: null }));
+    this.spots = setup.layout.spots; // good places along the roads (the bot uses them)
+    this.isWater = null; // set by the view on river maps
     this.squads = [];
     this.foes = [];
     this.militia = [];
@@ -66,7 +67,7 @@ export class Sim {
       dead: false, reviveT: 0, lastHit: -99, face: 1, moving: false, atkAnim: 0, dashT: 0,
     };
     this.skills = setup.skills.map(s => s && { ...s, cdT: 0 });
-    // generals: 'hand' (can be placed once waitT is 0) or 'field' (standing on a spot)
+    // generals: 'hand' (can be placed once waitT is 0) or 'field' (on the battlefield)
     this.generals = (setup.generals || []).map(g => ({ ...g, state: 'hand', waitT: 0, squad: null, hpLeft: null }));
     this.rallies = [];
   }
@@ -118,27 +119,44 @@ export class Sim {
     return { ok: true, bonus };
   }
 
-  deploy(spotId, type) {
-    const spot = this.spots[spotId];
+  // Where a unit may be put down: inside the field, off the road (every type: melee units walk
+  // onto the road from there), not on top of another unit, not at the gate or in water.
+  canPlace(x, y, ignore = null, units = true) {
+    if (x < 26 || x > WORLD_W - 26 || y < 74 || y > WORLD_H - 22) return { ok: false, reason: 'edge' };
+    const g = this.layout.gate;
+    if (Math.hypot(x - g.x, y - g.y) < 80) return { ok: false, reason: 'gate' };
+    if (this.isWater && this.isWater(x, y)) return { ok: false, reason: 'water' };
+    if (nearestOnPaths(this.paths, x, y).dist < ROAD_CLEAR) return { ok: false, reason: 'road' };
+    for (const q of units ? this.squads : []) {
+      if (q === ignore) continue;
+      if (Math.hypot(q.hx - x, q.hy - y) < PLACE_GAP) return { ok: false, reason: 'overlap' };
+    }
+    return { ok: true };
+  }
+
+  newSquad(fields, x, y) {
+    return {
+      kind: 'squad', id: this.nextId++, star: 1, x, y, hx: x, hy: y,
+      cdT: 0.3, blocking: [], lastHit: -99, atkAnim: 0, face: 1, target: null, chase: null, moving: false, walkT: 0,
+      ...fields,
+    };
+  }
+
+  deploy(type, x, y) {
     const T = this.setup.troops[type];
-    if (!spot || spot.squad || !T) return { ok: false, reason: 'spot' };
+    if (!T) return { ok: false, reason: 'type' };
     if (!(this.roster[type] > 0)) return { ok: false, reason: 'roster' };
     if (this.food < TROOPS[type].cost) return { ok: false, reason: 'food' };
+    const can = this.canPlace(x, y);
+    if (!can.ok) return can;
     this.food -= TROOPS[type].cost;
     this.roster[type]--;
-    const melee = TROOPS[type].melee;
-    const home = melee ? spot.guard : spot;
-    const s = {
-      kind: 'squad', id: this.nextId++, type, spot: spot.id, star: 1, spent: TROOPS[type].cost,
-      x: home.x, y: home.y, sx: spot.x, sy: spot.y,
-      hp: T.hp, maxHp: T.hp, cdT: 0.3, blocking: [], lastHit: -99, atkAnim: 0, face: 1, target: null,
-    };
+    const s = this.newSquad({ type, spent: TROOPS[type].cost, hp: T.hp, maxHp: T.hp }, x, y);
     this.applyStar(s);
     s.hp = s.maxHp;
-    spot.squad = s;
     this.squads.push(s);
     this.stats.deployed++;
-    this.emit({ k: 'deploy', x: s.x, y: s.y, type });
+    this.emit({ k: 'deploy', x, y, type });
     return { ok: true, squad: s };
   }
 
@@ -155,26 +173,23 @@ export class Sim {
   }
 
   // Generals cost no food; one that was picked up keeps its health.
-  deployGeneral(spotId, key) {
-    const g = this.generals.find(x => x.key === key);
-    const spot = this.spots[spotId];
-    if (!g || !spot || spot.squad) return { ok: false, reason: 'spot' };
+  deployGeneral(key, x, y) {
+    const g = this.generals.find(q => q.key === key);
+    if (!g) return { ok: false, reason: 'type' };
     if (g.state === 'field') return { ok: false, reason: 'field' };
     if (g.waitT > 0) return { ok: false, reason: 'wait' };
-    const melee = TROOPS[g.type].melee;
-    const home = melee ? spot.guard : spot;
-    const s = {
-      kind: 'squad', id: this.nextId++, type: g.type, general: g.key, gen: g, spot: spot.id, star: 1, spent: 0,
-      x: home.x, y: home.y, sx: spot.x, sy: spot.y,
-      hp: g.hpLeft ?? g.hp, maxHp: g.hp, atk: g.atk, cd: g.cd, cdT: 0.3, range: g.range, block: g.block, dr: g.dr,
-      blocking: [], lastHit: -99, atkAnim: 0, face: 1, target: null, specT: (GEN_SPECIALS[g.kind].cd || 0) * 0.4,
-    };
-    spot.squad = s;
+    const can = this.canPlace(x, y);
+    if (!can.ok) return can;
+    const s = this.newSquad({
+      type: g.type, general: g.key, gen: g, spent: 0,
+      hp: g.hpLeft ?? g.hp, maxHp: g.hp, atk: g.atk, cd: g.cd, range: g.range, block: g.block, dr: g.dr,
+      specT: (GEN_SPECIALS[g.kind].cd || 0) * 0.4,
+    }, x, y);
     this.squads.push(s);
     g.state = 'field';
     g.squad = s;
     g.hpLeft = null;
-    this.emit({ k: 'deploy', x: s.x, y: s.y, type: s.type, general: g.key });
+    this.emit({ k: 'deploy', x, y, type: s.type, general: g.key });
     return { ok: true, squad: s };
   }
 
@@ -650,7 +665,8 @@ export class Sim {
     s.specT -= dt;
     if (s.specT > 0) return;
     const melee = TROOPS[s.type].melee;
-    const pos = melee ? { x: s.x, y: s.y } : { x: s.sx, y: s.sy };
+    const pos = { x: s.x, y: s.y };
+    void melee;
     const atk = s.atk * this.troopAtkMult(s);
     const near = r => this.foes.filter(f => f.hp > 0 && Math.hypot(f.x - pos.x, f.y - pos.y) < r);
     let used = false;
@@ -700,8 +716,9 @@ export class Sim {
         break;
       }
       case 'charge': {
-        const spot = this.spots[s.spot];
-        const p = spot.guard.path, gd = spot.guard.d;
+        const near = nearestOnPaths(this.paths, s.x, s.y);
+        if (near.dist > s.range + 20) break; // too far from the road to charge along it
+        const p = near.path, gd = near.d;
         const hits = this.foes.filter(f => f.hp > 0 && f.path === p && f.d > gd - sp.length && f.d < gd + 30 && f.state !== 'raid');
         if (hits.length) {
           for (const f of hits) this.hitFoe(f, atk * sp.power, s.type);
@@ -751,6 +768,7 @@ export class Sim {
     for (const s of this.squads.slice()) {
       s.atkAnim = Math.max(0, s.atkAnim - dt);
       this.regen(s, dt);
+      if (TROOPS[s.type].melee) this.moveMelee(s, dt);
       if (s.gen) {
         this.generalSpecial(s, dt);
         if (s.gone) continue;
@@ -762,13 +780,13 @@ export class Sim {
       const multi = s.gen && s.gen.kind === 'multishot' ? GEN_SPECIALS.multishot.targets : 1;
       let t = null;
       if (T.melee) {
-        t = s.blocking.find(f => f.hp > 0) || this.pickTarget(s, s.range);
+        t = s.blocking.find(f => f.hp > 0) || this.pickTarget(s, T.reach + 6);
         if (!t) continue;
         s.cdT = s.cd;
         s.atkAnim = 0.3;
         s.target = { x: t.x, y: t.y };
         s.face = t.x >= s.x ? 1 : -1;
-        const extra = multi > 1 ? this.pickTargets(s, s.range, multi).filter(f => f !== t).slice(0, multi - 1) : [];
+        const extra = multi > 1 ? this.pickTargets(s, T.reach + 30, multi).filter(f => f !== t).slice(0, multi - 1) : [];
         for (const f of [t, ...extra]) {
           this.hitFoe(f, atk, s.type, s);
           this.emit({ k: 'slash', x: f.x, y: f.y, type: s.type });
@@ -778,8 +796,8 @@ export class Sim {
         if (!t) continue;
         s.cdT = s.cd;
         s.atkAnim = 0.3;
-        s.face = t.x >= s.sx ? 1 : -1;
-        const from = { x: s.sx, y: s.sy - 14 };
+        s.face = t.x >= s.x ? 1 : -1;
+        const from = { x: s.x, y: s.y - 14 };
         if (multi > 1) {
           for (const f of this.pickTargets(s, s.range, multi)) {
             this.projectiles.push({ kind: 'arrow', side: 'p', x: from.x, y: from.y, target: f, tx: f.x, ty: f.y, speed: 650, dmg: atk, att: s.type });
@@ -800,6 +818,43 @@ export class Sim {
           this.emit({ k: 'launch', x: from.x, y: from.y });
         }
       }
+    }
+  }
+
+  // Melee squads guard a circle (their range) around where they were put: they run to
+  // enemies inside it, stop them, and walk back home when it is clear.
+  moveMelee(s, dt) {
+    const T = TROOPS[s.type];
+    if (s.blocking.length) { s.moving = false; s.chase = null; return; }
+    const leash = s.range;
+    const inArea = f => f.hp > 0 && !f.gone && Math.hypot(f.x - s.hx, f.y - s.hy) < leash + 6;
+    if (s.chase && !inArea(s.chase)) s.chase = null;
+    if (!s.chase) {
+      let best = null, bs = -Infinity;
+      for (const f of this.foes) {
+        if (!inArea(f)) continue;
+        const free = f.state === 'walk' || f.state === 'raid' || f.state === 'return';
+        const sc = (free ? 2 : 0) + counterLevel(s.type, f.type) * 0.4 - Math.hypot(f.x - s.x, f.y - s.y) / 120 + (f.boss ? 0.5 : 0);
+        if (sc > bs) { bs = sc; best = f; }
+      }
+      s.chase = best;
+    }
+    const goal = s.chase || { x: s.hx, y: s.hy };
+    const stop = s.chase ? T.reach * 0.6 : 1;
+    const dx = goal.x - s.x, dy = goal.y - s.y;
+    const d = Math.hypot(dx, dy);
+    if (d > stop + 0.5) {
+      const step = Math.min(d - stop, T.speed * dt);
+      let nx = s.x + dx / d * step, ny = s.y + dy / d * step;
+      const hx = nx - s.hx, hy = ny - s.hy, hd = Math.hypot(hx, hy);
+      if (hd > leash) { nx = s.hx + hx / hd * leash; ny = s.hy + hy / hd * leash; }
+      s.x = nx;
+      s.y = ny;
+      s.face = dx >= 0 ? 1 : -1;
+      s.moving = true;
+      s.walkT += dt;
+    } else {
+      s.moving = false;
     }
   }
 
@@ -1107,8 +1162,6 @@ export class Sim {
     this.releaseAll(s);
     const i = this.squads.indexOf(s);
     if (i >= 0) this.squads.splice(i, 1);
-    const spot = this.spots[s.spot];
-    if (spot && spot.squad === s) spot.squad = null;
     for (const f of this.foes) if (f.raid === s) { f.raid = null; f.state = 'return'; }
   }
 

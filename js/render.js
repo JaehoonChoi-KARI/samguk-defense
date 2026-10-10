@@ -1,6 +1,6 @@
 // Draws a battle: cached terrain + roads, then units, shots and effects every frame.
 
-import { TROOPS, FACTIONS, LORDS, SKILLS, ITEMS, GATE_HP, COUNTER_MARK, GENERALS } from './data.js';
+import { TROOPS, FACTIONS, LORDS, SKILLS, ITEMS, GATE_HP, COUNTER_MARK, GENERALS, GEN_SPECIALS } from './data.js';
 import { WORLD_W, WORLD_H, nearestOnPath, pathAt } from './maps.js';
 import { drawSoldier, drawSquad, drawLord, drawSpot, drawGate, drawWall, drawGeneral, shadow } from './sprites.js';
 import { rng } from './waves.js';
@@ -38,9 +38,10 @@ export class BattleView {
   // ---- coordinates --------------------------------------------------------------------
 
   fit(view) {
-    const s = Math.min(view.w / WORLD_W, view.h / WORLD_H);
+    const w = view.w - (this.insetR || 0);
+    const s = Math.min(w / WORLD_W, view.h / WORLD_H);
     this.scale = s;
-    this.ox = (view.w - WORLD_W * s) / 2;
+    this.ox = (w - WORLD_W * s) / 2;
     this.oy = (view.h - WORLD_H * s) / 2;
   }
 
@@ -69,7 +70,7 @@ export class BattleView {
   }
 
   buildCache(view) {
-    const key = `${view.w}x${view.h}@${view.dpr}`;
+    const key = `${view.w}x${view.h}@${view.dpr}:${this.insetR || 0}`;
     if (this.cache && this.cacheKey === key) return;
     this.cacheKey = key;
     const c = this.cache || document.createElement('canvas');
@@ -493,29 +494,29 @@ export class BattleView {
     // zones under the units
     for (const z of sim.zones) this.drawZone(ctx, z);
 
-    // spots
-    for (const s of sim.spots) {
-      const hl = ui.spot === s.id || ui.hover === s.id || (ui.squad && ui.squad.spot === s.id);
-      drawSpot(ctx, s.x, s.y, { empty: !s.squad, flag: !!s.squad && TROOPS[s.squad.type].melee, hl, color: this.us.color });
-      if (s.squad && TROOPS[s.squad.type].melee) {
-        // melee squads stand on the road; a faint line shows which flag they belong to
-        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    // melee squads guard the place they were put: a small banner marks it
+    for (const q of sim.squads) {
+      if (!TROOPS[q.type].melee) continue;
+      if (Math.hypot(q.x - q.hx, q.y - q.hy) > 14) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
         ctx.setLineDash([4, 5]);
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(s.x, s.y);
-        ctx.lineTo(s.squad.x, s.squad.y);
+        ctx.moveTo(q.hx, q.hy);
+        ctx.lineTo(q.x, q.y);
         ctx.stroke();
         ctx.setLineDash([]);
       }
+      this.homeFlag(ctx, q.hx, q.hy, ui.squad === q);
     }
 
     // range circles for the selected squad / the lord being dragged
     if (ui.squad && sim.squads.includes(ui.squad)) {
       const q = ui.squad;
-      this.rangeCircle(ctx, TROOPS[q.type].melee ? q.x : q.sx, TROOPS[q.type].melee ? q.y : q.sy, q.range, '#ffffff');
+      this.rangeCircle(ctx, q.hx, q.hy, q.range, '#ffffff');
     }
     if (ui.preview) this.rangeCircle(ctx, ui.preview.x, ui.preview.y, ui.preview.r, '#ffe27a');
+    if (ui.ghost && ui.ghost.x !== undefined) this.drawGhost(ctx, ui.ghost);
 
     // units, back to front
     const list = [];
@@ -564,6 +565,48 @@ export class BattleView {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.fillStyle = `rgba(255,0,0,${0.18 * (1 - flash.t / flash.life)})`;
       ctx.fillRect(0, 0, view.w * view.dpr, view.h * view.dpr);
+    }
+  }
+
+  homeFlag(ctx, x, y, hl) {
+    ctx.beginPath();
+    ctx.ellipse(x, y + 2, 9, 4, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fill();
+    ctx.strokeStyle = '#5c3a1a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, y - 20);
+    ctx.stroke();
+    ctx.fillStyle = hl ? '#ffe27a' : this.us.color;
+    ctx.fillRect(x, y - 20, 11, 7);
+  }
+
+  // Where a unit would go: see-through soldiers and the range (green = can place, red = cannot).
+  drawGhost(ctx, g) {
+    const ok = g.ok;
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2);
+    ctx.fillStyle = ok ? 'rgba(120, 255, 140, 0.13)' : 'rgba(255, 80, 60, 0.13)';
+    ctx.fill();
+    ctx.strokeStyle = ok ? 'rgba(140, 255, 160, 0.95)' : 'rgba(255, 90, 70, 0.95)';
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash(g.melee ? [10, 7] : []);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    if (g.gen) drawGeneral(ctx, g.type, g.x, g.y, this.us, { scale: UNIT, letter: g.letter, noBanner: true });
+    else drawSquad(ctx, g.type, g.x, g.y, this.us, { scale: UNIT });
+    ctx.restore();
+    if (!ok) {
+      ctx.strokeStyle = '#ff4a3a';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(g.x - 12, g.y - 30); ctx.lineTo(g.x + 12, g.y - 6);
+      ctx.moveTo(g.x + 12, g.y - 30); ctx.lineTo(g.x - 12, g.y - 6);
+      ctx.stroke();
     }
   }
 
@@ -619,11 +662,22 @@ export class BattleView {
       const k = Math.min(d - 10, s.type === 'cavalry' ? 60 : 16) * Math.sin(atk * Math.PI);
       lunge = { x: dx / d * Math.max(0, k), y: dy / d * Math.max(0, k) };
     }
-    const x = melee ? s.x : s.sx, y = melee ? s.y : s.sy;
+    if (s.moving) lunge = null;
+    const x = s.x, y = s.y;
     if (s.gen) {
       const G = GENERALS[s.general];
       const lx = lunge ? lunge.x : 0, ly = lunge ? lunge.y : 0;
-      drawGeneral(ctx, s.type, x + lx, y + ly, this.us, { face: s.face, atk, scale: UNIT, letter: G.letter });
+      drawGeneral(ctx, s.type, x + lx, y + ly, this.us, { face: s.face, atk, scale: UNIT, letter: G.letter, moving: s.moving, walk: s.walkT });
+      const sp = GEN_SPECIALS[G.kind];
+      if (sp.cd) {
+        // special charging around the general's feet; full circle = ready
+        const p = Math.max(0, Math.min(1, 1 - s.specT / sp.cd));
+        ctx.beginPath();
+        ctx.ellipse(x, y, 26 * UNIT, 11 * UNIT, 0, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p);
+        ctx.strokeStyle = p >= 1 ? '#fff3a0' : 'rgba(255,200,60,0.9)';
+        ctx.lineWidth = p >= 1 ? 3.5 : 2.5;
+        ctx.stroke();
+      }
       const gt = (s.type === 'cavalry' ? 52 : s.type === 'catapult' ? 40 : 50) * UNIT;
       this.hpBar(ctx, x, y - gt, 40, s.hp / s.maxHp, s.hp / s.maxHp > 0.35 ? '#ffd54f' : '#ff6b6b');
       ctx.font = '900 14px -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
@@ -636,7 +690,7 @@ export class BattleView {
       ctx.fillText(G.name, x, y - gt - 10);
       return;
     }
-    drawSquad(ctx, s.type, x, y, this.us, { face: s.face, atk, lunge, scale: UNIT });
+    drawSquad(ctx, s.type, x, y, this.us, { face: s.face, atk, lunge, scale: UNIT, moving: s.moving, walk: s.walkT });
     const top = (s.type === 'cavalry' ? 46 : s.type === 'strategist' ? 40 : 34) * UNIT;
     this.hpBar(ctx, x, y - top, 30, s.hp / s.maxHp, s.hp / s.maxHp > 0.35 ? '#5be37d' : '#ff6b6b');
     this.stars(ctx, x, y - top - 9, s.star);

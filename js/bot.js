@@ -2,10 +2,10 @@
 // battle (deploy, promote, skills, items). Used by the "추천 편성" button, the automated
 // tests and the balance tool.
 
-import { TROOPS, TROOP_KEYS, SKILLS, counterMult, FOES, GENERALS, GENERAL_PICKS } from './data.js';
+import { TROOPS, TROOP_KEYS, SKILLS, counterMult, FOES, GENERALS, GENERAL_PICKS, PLACE_GAP } from './data.js';
 import { lordLeadership, troopUnlocked, unlockedGenerals } from './army.js';
 import { stageSummary, waveSummary } from './waves.js';
-import { pathAt } from './maps.js';
+import { pathAt, nearestOnPaths } from './maps.js';
 
 // How useful a troop type is against a mix of enemies (1 = even, higher = better).
 function typeScore(t, counts) {
@@ -66,7 +66,7 @@ export class Bot {
   }
 
   coverage(spot, range) {
-    const k = `${spot.id}:${range}`;
+    const k = `${Math.round(spot.x)},${Math.round(spot.y)}:${Math.round(range)}`;
     if (this.cover.has(k)) return this.cover.get(k);
     let c = 0;
     for (const p of this.sim.paths) {
@@ -102,22 +102,39 @@ export class Bot {
     return avail[0];
   }
 
-  pickSpot(type) {
+  // Places beside the roads the bot may use: ranged units a little way off the road, melee
+  // units close to it so their guard area covers the road. Fixed checks are done once.
+  candidates(melee) {
+    const k = melee ? 'm' : 'r';
+    this.cands = this.cands || {};
+    if (this.cands[k]) return this.cands[k];
     const sim = this.sim;
-    const free = sim.spots.filter(s => !s.squad);
-    if (!free.length) return null;
-    const T = sim.setup.troops[type] || { range: TROOPS[type].range };
-    let best = null, bs = -1;
-    for (const s of free) {
-      let score;
-      if (TROOPS[type].melee) {
-        const p = sim.paths[s.guard.path];
-        const frac = s.guard.d / p.len;
-        score = 1 - Math.abs(frac - 0.62) + this.coverage(s, 200) * 0.002;
-      } else {
-        score = this.coverage(s, T.range);
+    const out = [];
+    for (const p of sim.paths) {
+      for (let d = 60; d < p.len - 60; d += 40) {
+        const q = pathAt(p, d);
+        const nx = -Math.sin(q.ang), ny = Math.cos(q.ang);
+        for (const side of [-1, 1]) {
+          const off = melee ? 50 : 80;
+          const x = q.x + nx * off * side, y = q.y + ny * off * side;
+          if (!sim.canPlace(x, y, null, false).ok) continue;
+          const near = nearestOnPaths(sim.paths, x, y);
+          out.push({ x, y, frac: near.d / sim.paths[near.path].len });
+        }
       }
-      if (score > bs) { bs = score; best = s; }
+    }
+    this.cands[k] = out;
+    return out;
+  }
+
+  pickPos(type, range) {
+    const sim = this.sim;
+    const melee = TROOPS[type].melee;
+    let best = null, bs = -Infinity;
+    for (const c of this.candidates(melee)) {
+      if (sim.squads.some(q => Math.hypot(q.hx - c.x, q.hy - c.y) < PLACE_GAP)) continue;
+      const score = melee ? 1 - Math.abs(c.frac - 0.62) + this.coverage(c, range) * 0.002 : this.coverage(c, range);
+      if (score > bs) { bs = score; best = c; }
     }
     return best;
   }
@@ -132,19 +149,19 @@ export class Bot {
     // generals first: they are free
     for (const g of sim.generals) {
       if (g.state !== 'hand' || g.waitT > 0) continue;
-      const spot = this.pickSpot(g.type);
-      if (spot) sim.deployGeneral(spot.id, g.key);
+      const pos = this.pickPos(g.type, g.range);
+      if (pos) sim.deployGeneral(g.key, pos.x, pos.y);
     }
     // deploy while there is food and room
     for (let k = 0; k < 4; k++) {
       const t = this.pickType();
       if (!t) break;
-      const spot = this.pickSpot(t);
-      if (!spot) break;
-      if (!sim.deploy(spot.id, t).ok) break;
+      const pos = this.pickPos(t, sim.setup.troops[t].range);
+      if (!pos) break;
+      if (!sim.deploy(t, pos.x, pos.y).ok) break;
     }
     // promote the most useful squad we can afford
-    const free = sim.spots.some(s => !s.squad) && TROOP_KEYS.some(t => sim.roster[t] > 0);
+    const free = TROOP_KEYS.some(t => sim.roster[t] > 0);
     const reserve = free ? 90 : 0;
     const cands = sim.squads.filter(q => q.star < 3).map(q => ({ q, cost: sim.starCost(q) }))
       .filter(c => c.cost !== null && sim.food - reserve >= c.cost)

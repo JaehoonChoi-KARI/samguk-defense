@@ -1,7 +1,7 @@
 // Game rules and numbers: troop types and counters, lords and skills, equipment,
 // consumable items and growth formulas. Balance knobs live here.
 
-export const VERSION = '1.0.3'; // keep in sync with CACHE in sw.js
+export const VERSION = '1.0.4'; // keep in sync with CACHE in sw.js
 export const STAGE_COUNT = 20;
 export const GATE_HP = 20;
 export const MAX_LORD_LEVEL = 30;
@@ -18,17 +18,17 @@ export const TROOP_KEYS = ['infantry', 'spear', 'cavalry', 'archer', 'strategist
 export const TROOPS = {
   infantry: {
     name: '보병', short: '보병', melee: true, cost: 60, lead: 2,
-    hp: 400, atk: 15, cd: 1.0, range: 62, block: 3,
+    hp: 400, atk: 15, cd: 1.0, range: 85, block: 3, speed: 75, reach: 34,
     desc: '칼과 방패. 길을 막고 오래 버텨요.',
   },
   spear: {
     name: '창병', short: '창병', melee: true, cost: 60, lead: 2,
-    hp: 320, atk: 19, cd: 1.0, range: 72, block: 2,
+    hp: 320, atk: 19, cd: 1.0, range: 90, block: 2, speed: 75, reach: 40,
     desc: '긴 창으로 길을 막아요. 기마병을 잘 막아요.',
   },
   cavalry: {
     name: '기마병', short: '기마', melee: true, cost: 90, lead: 3,
-    hp: 360, atk: 28, cd: 1.1, range: 130, block: 2,
+    hp: 360, atk: 28, cd: 1.1, range: 140, block: 2, speed: 130, reach: 38,
     desc: '멀리까지 달려 나가 강하게 들이받아요.',
   },
   archer: {
@@ -175,6 +175,10 @@ export const STAR_MULT = [1, 1.45, 2.0];
 export const STAR_RANGE = [1, 1.07, 1.14];
 export const STAR_COST = [0.7, 1.0]; // × deploy cost, for ★2 and ★3
 export const RETREAT_REFUND = 0.5;
+
+// Free placement: how far apart units must stand, how far ranged units keep off the road.
+export const PLACE_GAP = 40;
+export const ROAD_CLEAR = 34;
 
 export const troopLevelMult = lv => 1 + 0.12 * (lv - 1);
 export const troopUpCost = lv => Math.round(80 * 1.18 ** (lv - 1)); // gold for lv → lv+1
@@ -397,9 +401,9 @@ export const NO_REWARD_GAP = 2; // lord level ≥ recommended + this → replays
 // Difficulty is chosen with the lord for a new game. 지옥 appears once an ending has been seen on this device.
 export const DIFFS = [
   { key: 'easy', name: '쉬움', icon: '🌱', hp: 1.45, atk: 1.3, gold: 0.85, desc: '적이 약해요. 처음 하는 사람에게 추천' },
-  { key: 'normal', name: '보통', icon: '⚔️', hp: 2.45, atk: 1.9, gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
-  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.15, atk: 2.3, gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
-  { key: 'hell', name: '지옥', icon: '💀', hp: 4.3, atk: 2.95, gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
+  { key: 'normal', name: '보통', icon: '⚔️', hp: 2.94, atk: 2.13, gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
+  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.75, atk: 2.6, gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
+  { key: 'hell', name: '지옥', icon: '💀', hp: 4.56, atk: 3.07, gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
 ];
 export const diffOf = save => DIFFS[save?.diff ?? 1] || DIFFS[1];
 // Harder difficulties bite less in the first stages (a new 지옥 game still starts at Lv 1).

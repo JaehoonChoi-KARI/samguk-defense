@@ -780,3 +780,86 @@ em.up.very { color: #e04e00; letter-spacing: -2px; }
   .sb-text p { font-size: 16px; line-height: 1.6; }
   .sb-title { font-size: 20px; }
 }
+
+/* ---- generals in the battle HUD --------------------------------------------------- */
+.gen-chips { position: absolute; top: var(--safe-t); right: calc(var(--safe-r) + 152px); display: flex; gap: 10px; }
+.gchip {
+  position: relative; width: 54px; height: 54px; border-radius: 50%; padding: 3px; border: none;
+  background: conic-gradient(#ffd54f calc(var(--p, 0) * 1turn), rgba(20, 12, 6, 0.8) 0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+.gchip img { width: 48px; height: 48px; border-radius: 50%; display: block; }
+.gchip.wait img { filter: grayscale(1) brightness(0.7); }
+.gchip.ready { box-shadow: 0 0 0 3px #7de38a, 0 2px 6px rgba(0, 0, 0, 0.5); }
+.gchip.placing { box-shadow: 0 0 0 3px #fff, 0 0 14px #ffd54f; }
+.gc-name {
+  position: absolute; left: 50%; bottom: -9px; transform: translateX(-50%); white-space: nowrap;
+  font-size: 11px; font-weight: 900; color: #fff3d0; background: rgba(20, 12, 6, 0.85); border-radius: 6px; padding: 0 5px;
+}
+.gc-state {
+  position: absolute; top: -5px; right: -6px; min-width: 22px; height: 22px; border-radius: 11px; padding: 0 4px;
+  font-style: normal; font-size: 12px; font-weight: 900; display: flex; align-items: center; justify-content: center;
+  background: #7de38a; color: #143a14;
+}
+.gchip.field .gc-state { background: var(--gold); color: var(--ink); }
+.gchip.wait .gc-state { background: #ff8a7a; color: #3a0f0a; }
+.gen-info {
+  position: absolute; top: calc(var(--safe-t) + 70px); right: calc(var(--safe-r) + 110px); width: 320px; z-index: 6;
+  background: linear-gradient(180deg, var(--paper), var(--paper2)); color: var(--ink);
+  border: 3px solid #8c6a3a; border-radius: 16px; padding: 8px 10px 10px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+}
+.gi-state { font-size: 14px; font-weight: 800; color: var(--ink2); margin: 4px 0; }
+.tbtn .tskill { font-size: 12px; font-weight: 800; color: #8a5a00; }
+.pop-gen { font-size: 13px; line-height: 1.4; margin-top: 4px; background: rgba(255, 246, 208, 0.9); border-radius: 8px; padding: 4px 8px; }
+
+/* ---- unit list (place units by picking them here) --------------------------------------- */
+.inv {
+  position: absolute; right: var(--safe-r); top: calc(var(--safe-t) + 58px); bottom: calc(var(--safe-b) + 98px);
+  width: 112px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; padding: 6px;
+  background: rgba(20, 12, 6, 0.62); border: 2px solid rgba(242, 193, 78, 0.5); border-radius: 14px;
+}
+.icard {
+  position: relative; flex: none; display: flex; flex-direction: column; align-items: center; padding: 4px 2px 5px;
+  border-radius: 12px; background: linear-gradient(180deg, #fffaf0, #ecd9ad); color: var(--ink);
+  touch-action: pan-y; box-shadow: 0 2px 0 #a88a52; cursor: grab; user-select: none;
+}
+.icard img { width: 46px; height: 46px; pointer-events: none; }
+.ic-mid { text-align: center; line-height: 1.15; pointer-events: none; }
+.ic-mid b { font-size: 14px; }
+.ic-mid small { display: block; font-size: 11px; font-weight: 800; color: #8a5a00; }
+.icard em.up { color: #e07b00; font-style: normal; font-size: 11px; margin-left: 2px; }
+.icard em.up.very { color: #e04e00; }
+.ic-badge {
+  position: absolute; top: 3px; right: 3px; font-style: normal; font-size: 12px; font-weight: 900;
+  background: var(--ink); color: #fff; border-radius: 8px; padding: 0 5px; pointer-events: none;
+}
+.icard.sel { box-shadow: 0 0 0 3px #fff, 0 0 14px #ffd54f; background: linear-gradient(180deg, #fff6c8, #f3d978); }
+.icard.none { opacity: 0.4; }
+.icard.poor { opacity: 0.8; }
+.icard.poor .ic-cost { color: var(--bad); }
+.icard.gen { background: linear-gradient(180deg, #fff6d0, #f3dc8a); }
+.icard.gen img { border-radius: 50%; padding: 2px; background: conic-gradient(#ffd54f calc(var(--p, 0) * 1turn), rgba(0, 0, 0, 0.15) 0); }
+.icard.gen.wait img { filter: grayscale(1) brightness(0.8); }
+.icard.gen.ready .ic-badge { background: var(--good); }
+.icard.gen.field .ic-badge { background: var(--gold2); }
+.icard.gen.wait .ic-badge { background: var(--bad); }
+.ic-info {
+  position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; border: none; padding: 0;
+  background: var(--ink); color: #fff; font-weight: 900; font-size: 13px; font-style: italic;
+}
+.inv-empty { color: #fff3d0; font-size: 12px; text-align: center; }
+.gen-info { right: 140px; }
+@media (max-height: 600px) {
+  .inv { width: 96px; gap: 4px; padding: 4px; }
+  .icard img { width: 34px; height: 34px; }
+  .ic-mid b { font-size: 12px; }
+}
+/* generals: their own column, just inside the troop list */
+.inv-gen {
+  position: absolute; top: calc(var(--safe-t) + 58px); right: calc(var(--safe-r) + 120px);
+  width: 104px; display: flex; flex-direction: column; gap: 6px; padding: 6px;
+  background: rgba(20, 12, 6, 0.62); border: 2px solid rgba(242, 193, 78, 0.5); border-radius: 14px;
+}
+@media (max-height: 600px) {
+  .inv-gen { right: calc(var(--safe-r) + 102px); width: 92px; gap: 4px; padding: 4px; }
+}

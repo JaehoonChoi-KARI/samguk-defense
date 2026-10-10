@@ -1,5 +1,9 @@
 // A battle on screen: owns the Sim and its BattleView, the DOM HUD (top bar, wave panel,
-// skill and item buttons, spot/squad menus) and all touch input on the battlefield.
+// the unit list on the right, skill and item buttons, unit menus) and all touch input.
+//
+// Placing units: pick a unit in the list on the right (or drag it out of the list), then
+// press on the map. While the finger is down a see-through unit and its range follow it;
+// letting go puts the unit there. Units go beside the road, never on it or on each other.
 
 import {
   TROOPS, TROOP_KEYS, LORDS, SKILLS, ITEMS, ITEM_KEYS, SKILL_UNLOCK, GATE_HP, FACTIONS, fmt, counterMult,
@@ -20,7 +24,19 @@ function h(html) {
 }
 
 const LORD_TAP = 48;
-const SPOT_TAP = 40;
+const SQUAD_TAP = 36;
+const DRAG_START = 12; // px a finger must move before a list press becomes a drag
+
+const PLACE_ERR = {
+  road: '길 위에는 놓을 수 없어요. 길 옆에 놓아 주세요',
+  overlap: '다른 부대와 너무 가까워요',
+  gate: '성문 바로 앞에는 놓을 수 없어요',
+  water: '물 위에는 놓을 수 없어요',
+  edge: '전장 안쪽에 놓아 주세요',
+  food: '군량🌾이 모자라요',
+  roster: '남은 부대가 없어요',
+  field: '이미 전장에 있어요',
+};
 
 export class BattleController {
   constructor(game, stageIdx, stage, opts = {}) {
@@ -30,8 +46,10 @@ export class BattleController {
     this.setup = battleSetup(game.save, stageIdx, stage, opts);
     this.sim = new Sim(this.setup);
     this.view = new BattleView(this.sim);
+    this.sim.isWater = (x, y) => this.view.inWater(x, y);
     this.us = FACTIONS[LORDS[game.save.lord].faction];
-    this.ui = { spot: null, squad: null, aim: null, lordDrag: null, preview: null };
+    this.ui = { squad: null, aim: null, lordDrag: null, preview: null, ghost: null };
+    this.sel = null; // { kind: 'troop', type } | { kind: 'gen', key }
     this.speed = game.prefs.speed === 2 ? 2 : 1;
     this.ended = false;
     this.endT = 0;
@@ -48,6 +66,7 @@ export class BattleController {
   buildHud() {
     const sim = this.sim;
     const skills = LORDS[this.game.save.lord].skills;
+    const types = TROOP_KEYS.filter(t => (this.setup.roster[t] || 0) > 0);
     this.root.innerHTML = '';
     this.el = h(`
       <div class="bhud">
@@ -64,6 +83,23 @@ export class BattleController {
           <button class="hbtn speed" type="button">▶ ${this.speed}배</button>
           <button class="hbtn pause" type="button">⏸</button>
         </div>
+        ${sim.generals.length ? `<div class="inv-gen">${sim.generals.map(g => `
+            <div class="icard gen" data-g="${g.key}">
+              <img src="${generalIcon(g.type, GENERALS[g.key].letter, this.us, 56)}" alt="">
+              <div class="ic-mid"><b>${GENERALS[g.key].name}<em class="up"></em></b><small>✨ ${GENERALS[g.key].skill}</small></div>
+              <i class="ic-badge"></i>
+              <button class="ic-info" type="button">i</button>
+            </div>`).join('')}</div>` : ''}
+        <div class="inv">
+          ${types.map(t => `
+            <div class="icard" data-t="${t}">
+              <img src="${troopIcon(t, this.us, 56)}" alt="">
+              <div class="ic-mid"><b>${TROOPS[t].short}<em class="up"></em></b><small class="ic-cost">🌾${TROOPS[t].cost}</small></div>
+              <i class="ic-badge"></i>
+            </div>`).join('')}
+          ${!types.length && !sim.generals.length ? '<div class="inv-empty">데려온 부대가 없어요</div>' : ''}
+        </div>
+        <div class="gen-info hidden"></div>
         <div class="wave-panel hidden">
           <div class="wp-title"></div>
           <div class="wp-icons"></div>
@@ -91,6 +127,8 @@ export class BattleController {
     this.root.appendChild(this.el);
     this.$ = sel => this.el.querySelector(sel);
     this.popup = this.$('.popup');
+    this.inv = this.$('.inv');
+    this.invGen = this.$('.inv-gen');
 
     this.$('.pause').addEventListener('click', () => { sfx.select(); this.closePopup(); this.game.pause(); });
     this.$('.speed').addEventListener('click', () => {
@@ -103,13 +141,15 @@ export class BattleController {
     });
     this.$('.speed').classList.toggle('on', this.speed === 2);
     this.$('.wp-call').addEventListener('click', () => this.callWave());
-    this.$('.aim-cancel').addEventListener('click', () => { this.setAim(null); sfx.select(); });
-    for (const b of this.el.querySelectorAll('.sbtn')) {
-      b.addEventListener('click', () => this.onSkill(+b.dataset.i));
-    }
-    for (const b of this.el.querySelectorAll('.ibtn')) {
-      b.addEventListener('click', () => this.onItem(b.dataset.k));
-    }
+    this.$('.aim-cancel').addEventListener('click', () => { this.setAim(null); this.select(null); sfx.select(); });
+    for (const b of this.el.querySelectorAll('.sbtn')) b.addEventListener('click', () => this.onSkill(+b.dataset.i));
+    for (const b of this.el.querySelectorAll('.ibtn')) b.addEventListener('click', () => this.onItem(b.dataset.k));
+    for (const c of this.el.querySelectorAll('.icard')) this.bindCard(c);
+
+    // the battlefield is drawn left of the unit list
+    this.measureInset = () => { this.view.insetR = this.inv.offsetWidth ? window.innerWidth - this.inv.getBoundingClientRect().left + 6 : 0; };
+    this.measureInset();
+    window.addEventListener('resize', this.measureInset);
   }
 
   set(key, sel, value, prop = 'textContent') {
@@ -124,8 +164,7 @@ export class BattleController {
     this.set('gate', '.v-gate', String(Math.max(0, sim.gate)));
     this.set('food', '.v-food', fmt(Math.floor(sim.food)));
     this.set('wave', '.v-wave', `${Math.max(0, sim.waveIdx + 1)}/${sim.totalWaves}`);
-    const gatePill = this.$('.pill.gate');
-    gatePill.classList.toggle('low', sim.gate <= 6);
+    this.$('.pill.gate').classList.toggle('low', sim.gate <= 6);
 
     // boss bar
     const boss = sim.boss();
@@ -144,7 +183,7 @@ export class BattleController {
       const next = sim.nextWave();
       const idx = sim.waveIdx + 1;
       const title = sim.state === 'ready'
-        ? `첫 웨이브 · 준비가 되면 출격!`
+        ? '첫 웨이브 · 준비가 되면 출격!'
         : `다음 웨이브 ${idx + 1}/${sim.totalWaves} · ${Math.ceil(sim.nextT)}초`;
       this.set('wpTitle', '.wp-title', title);
       const key = `${idx}`;
@@ -161,7 +200,7 @@ export class BattleController {
       this.set('wpCall', '.wp-call', call);
     }
 
-    // skills
+    // skills and items
     const L = sim.lord;
     sim.skills.forEach((s, i) => {
       const b = this.el.querySelector(`.sbtn[data-i="${i}"]`);
@@ -182,7 +221,9 @@ export class BattleController {
       b.classList.toggle('aiming', this.ui.aim?.kind === 'item' && this.ui.aim.k === k);
     }
 
-    if (this.popupKind === 'spot' || this.popupKind === 'squad') this.refreshPopupCosts();
+    this.updateInventory();
+    if (this.genInfoKey) this.paintGenInfo(false);
+    if (this.popupKind === 'squad') this.refreshPopup();
   }
 
   banner(text, cls = '', ms = 1800) {
@@ -209,16 +250,14 @@ export class BattleController {
   refreshTutorial() {
     const el = this.$('.tut');
     if (!this.tutorial) { el.classList.add('hidden'); return; }
-    const sim = this.sim;
     let text = '';
-    if (this.tutorial === 1) text = '👆 <b>＋ 깃발</b> 자리를 눌러 부대를 배치하세요. 부대는 군량🌾이 들고, <b>장수</b>는 무료예요.';
-    else if (this.tutorial === 2) text = '좋아요! 부대를 하나 더 배치하고, 준비가 되면 위의 <b>⚔ 전투 시작!</b>을 누르세요.';
+    if (this.tutorial === 1) text = `👉 <b>오른쪽 목록</b>에서 부대를 고르고, 길 옆을 ${tapWord()}하세요. 누른 채로 움직이면 사거리를 보며 자리를 고를 수 있어요. <b>장수</b>는 무료!`;
+    else if (this.tutorial === 2) text = '좋아요! 부대를 하나 더 놓고, 준비가 되면 위의 <b>⚔ 전투 시작!</b>을 누르세요.';
     else if (this.tutorial === 3) text = `👆 <b>군주</b>를 ${dragHow()} 끌어서 옮길 수 있어요. 군주도 직접 싸워요!`;
     else if (this.tutorial === 4) text = `오른쪽 아래 <b>스킬</b>, 왼쪽 아래 <b>아이템</b>을 눌러 보세요. 위치를 고르는 건 화면을 ${tapWord()}!`;
-    else if (this.tutorial === 5) text = '배치한 부대를 누르면 <b>승급</b>(더 강하게)하거나 <b>철수</b>할 수 있어요.';
+    else if (this.tutorial === 5) text = '놓은 부대를 누르면 <b>승급</b>(더 강하게)하거나 <b>철수</b>할 수 있어요.';
     el.innerHTML = text;
     el.classList.toggle('hidden', !text);
-    void sim;
   }
 
   advanceTutorial(step) {
@@ -232,7 +271,181 @@ export class BattleController {
     this.refreshTutorial();
   }
 
-  // ---- input -----------------------------------------------------------------------------
+  // ---- the unit list (inventory) ----------------------------------------------------------
+
+  // Types the coming wave has, for ▲ marks on the list.
+  threatTypes() {
+    const w = this.sim.state === 'ready' || this.sim.nextT !== null ? this.sim.nextWave() : this.sim.waves[this.sim.waveIdx];
+    return w ? Object.keys(waveSummary(w)) : [];
+  }
+
+  genStatus(g) {
+    if (g.state === 'field') return { cls: 'field', badge: '⚔', text: '전장에서 싸우는 중' };
+    if (g.waitT > 0) return { cls: 'wait', badge: `${Math.ceil(g.waitT)}`, text: `${Math.ceil(g.waitT)}초 뒤에 다시 놓을 수 있어요` };
+    return { cls: 'ready', badge: '무료', text: '놓을 수 있어요 (무료)' };
+  }
+
+  updateInventory() {
+    const sim = this.sim;
+    const threats = this.threatTypes();
+    const tkey = threats.join(',');
+    for (const c of this.el.querySelectorAll('.icard')) {
+      let cls, badge, p = 0, type;
+      if (c.dataset.g) {
+        const g = sim.generals.find(x => x.key === c.dataset.g);
+        const st = this.genStatus(g);
+        const sp = GEN_SPECIALS[g.kind];
+        cls = st.cls;
+        badge = st.badge;
+        type = g.type;
+        if (g.state === 'field') p = sp.cd ? Math.max(0, Math.min(1, 1 - g.squad.specT / sp.cd)) : 1;
+        if (this.sel?.kind === 'gen' && this.sel.key === g.key) cls += ' sel';
+      } else {
+        type = c.dataset.t;
+        const left = sim.roster[type] || 0;
+        cls = left <= 0 ? 'none' : sim.food < TROOPS[type].cost ? 'poor' : 'ok';
+        badge = `×${left}`;
+        if (this.sel?.kind === 'troop' && this.sel.type === type) cls += ' sel';
+      }
+      const lv = bestLevel(type, threats);
+      const key = `${cls}|${badge}|${p.toFixed(2)}|${lv}|${tkey}`;
+      if (c.dataset.k === key) continue;
+      c.dataset.k = key;
+      c.className = `icard ${c.dataset.g ? 'gen ' : ''}${cls}`;
+      c.style.setProperty('--p', p.toFixed(3));
+      c.querySelector('.ic-badge').textContent = badge;
+      c.querySelector('.up').textContent = COUNTER_MARK[lv] || '';
+      c.querySelector('.up').classList.toggle('very', lv > 1);
+    }
+  }
+
+  // Press on a list card: a quick tap picks it, dragging carries it onto the map.
+  bindCard(c) {
+    const info = c.querySelector('.ic-info');
+    if (info) {
+      info.addEventListener('pointerdown', e => e.stopPropagation());
+      info.addEventListener('click', e => { e.stopPropagation(); this.toggleGenInfo(c.dataset.g); });
+    }
+    let drag = null;
+    c.addEventListener('pointerdown', e => {
+      if (this.game.paused || this.ended || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, moved: false };
+      try { c.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
+    });
+    c.addEventListener('pointermove', e => {
+      if (!drag || drag.id !== e.pointerId) return;
+      if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > DRAG_START) {
+        drag.moved = true;
+        if (!this.pick(c, true)) { drag = null; return; }
+      }
+      if (drag.moved) this.ghostAtScreen(e.clientX, e.clientY);
+    });
+    const end = e => {
+      if (!drag || drag.id !== e.pointerId) return;
+      const d = drag;
+      drag = null;
+      if (e.type === 'pointercancel') { this.ui.ghost = null; return; }
+      if (!d.moved) { this.pick(c, false); return; }
+      if (this.overMap(e.clientX, e.clientY)) this.tryPlace(this.view.toWorld(e.clientX, e.clientY));
+      else this.ui.ghost = null;
+    };
+    c.addEventListener('pointerup', end);
+    c.addEventListener('pointercancel', end);
+  }
+
+  // Select the unit on a card. `forDrag` keeps it selected even if it was already.
+  pick(c, forDrag) {
+    const sim = this.sim;
+    let sel;
+    if (c.dataset.g) {
+      const g = sim.generals.find(x => x.key === c.dataset.g);
+      if (g.state === 'field') {
+        if (!forDrag) this.toggleGenInfo(g.key);
+        return false;
+      }
+      sel = { kind: 'gen', key: g.key };
+    } else {
+      const t = c.dataset.t;
+      if (!(sim.roster[t] > 0)) { sfx.denied(); this.toast(PLACE_ERR.roster); return false; }
+      sel = { kind: 'troop', type: t };
+    }
+    const same = this.sel && this.sel.kind === sel.kind && (this.sel.type === sel.type && this.sel.key === sel.key);
+    if (same && !forDrag) { this.select(null); sfx.select(); return false; }
+    this.select(sel);
+    sfx.select();
+    return true;
+  }
+
+  select(sel) {
+    this.sel = sel;
+    this.ui.ghost = null;
+    if (sel) {
+      this.setAim(null);
+      this.closePopup();
+      this.closeGenInfo();
+    }
+    const hint = this.$('.aim-hint');
+    if (sel) {
+      const name = sel.kind === 'gen' ? `⭐ ${GENERALS[sel.key].name}` : TROOPS[sel.type].name;
+      hint.querySelector('.txt').textContent = `${name}: 길 옆을 누르고 있다가 손을 떼면 놓여요`;
+      hint.classList.remove('hidden');
+    } else if (!this.ui.aim) {
+      hint.classList.add('hidden');
+    }
+    for (const c of this.el.querySelectorAll('.icard')) c.dataset.k = '';
+  }
+
+  selInfo() {
+    const s = this.sel;
+    if (!s) return null;
+    if (s.kind === 'gen') {
+      const g = this.sim.generals.find(x => x.key === s.key);
+      return { type: g.type, range: g.range, gen: true, letter: GENERALS[g.key].letter };
+    }
+    return { type: s.type, range: this.setup.troops[s.type].range, gen: false };
+  }
+
+  overMap(sx, sy) {
+    for (const el of [this.inv, this.invGen]) {
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (sx >= r.left - 4 && sx <= r.right + 4 && sy >= r.top - 4 && sy <= r.bottom + 4) return false;
+    }
+    return true;
+  }
+
+  ghostAtScreen(sx, sy) {
+    if (!this.overMap(sx, sy)) { this.ui.ghost = null; return; }
+    this.ghostAt(this.view.toWorld(sx, sy));
+  }
+
+  ghostAt(w) {
+    const info = this.selInfo();
+    if (!info) { this.ui.ghost = null; return; }
+    let ok = this.sim.canPlace(w.x, w.y).ok;
+    if (ok && !info.gen && this.sim.food < TROOPS[info.type].cost) ok = false;
+    this.ui.ghost = { x: w.x, y: w.y, r: info.range, type: info.type, gen: info.gen, letter: info.letter, melee: TROOPS[info.type].melee, ok };
+  }
+
+  tryPlace(w) {
+    const s = this.sel;
+    this.ui.ghost = null;
+    if (!s) return false;
+    const r = s.kind === 'gen' ? this.sim.deployGeneral(s.key, w.x, w.y) : this.sim.deploy(s.type, w.x, w.y);
+    if (!r.ok) {
+      sfx.denied();
+      const g = s.kind === 'gen' ? this.sim.generals.find(x => x.key === s.key) : null;
+      this.toast(r.reason === 'wait' ? `${Math.ceil(g.waitT)}초 뒤에 놓을 수 있어요` : PLACE_ERR[r.reason] || '여기에는 놓을 수 없어요');
+      return false;
+    }
+    if (s.kind === 'gen') sfx.horn(); else sfx.deploy();
+    this.select(null);
+    if (this.tutorial === 1) this.advanceTutorial(1);
+    else if (this.tutorial === 2 && this.sim.squads.length >= 2) this.refreshTutorial();
+    return true;
+  }
+
+  // ---- input on the battlefield ------------------------------------------------------------
 
   bindInput() {
     const cv = this.game.canvas;
@@ -241,7 +454,7 @@ export class BattleController {
     this.onDown = e => {
       if (this.game.paused || this.ended) return;
       if (e.pointerType === 'mouse') {
-        // right click backs out of aiming or a menu; only the left button plays
+        // right click backs out of placing, aiming or a menu; only the left button plays
         if (e.button === 2) { e.preventDefault(); this.cancelAction(); return; }
         if (e.button !== 0) return;
         this.ptr = null; // a mouse has one pointer: drop a press whose release was missed
@@ -251,6 +464,11 @@ export class BattleController {
       const w = this.view.toWorld(e.clientX, e.clientY);
       this.ptr = { id: e.pointerId, sx: e.clientX, sy: e.clientY, w, moved: false, mode: null };
       try { cv.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
+      if (this.sel) {
+        this.ptr.mode = 'place';
+        this.ghostAt(w);
+        return;
+      }
       if (this.ui.aim) {
         this.ptr.mode = 'aim';
         this.ui.aim.x = w.x;
@@ -274,6 +492,7 @@ export class BattleController {
       const w = this.view.toWorld(e.clientX, e.clientY);
       if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 10) p.moved = true;
       p.w = w;
+      if (p.mode === 'place') this.ghostAt(w);
       if (p.mode === 'aim' && this.ui.aim) { this.ui.aim.x = w.x; this.ui.aim.y = w.y; }
       if (p.mode === 'lord') this.ui.lordDrag = { x: w.x, y: w.y };
     };
@@ -281,8 +500,9 @@ export class BattleController {
       const p = this.ptr;
       if (!p || p.id !== e.pointerId) return;
       this.ptr = null;
-      if (e.type === 'pointercancel') { this.ui.lordDrag = null; return; }
+      if (e.type === 'pointercancel') { this.ui.lordDrag = null; this.ui.ghost = null; return; }
       const w = this.view.toWorld(e.clientX, e.clientY);
+      if (p.mode === 'place') { this.tryPlace(w); return; }
       if (p.mode === 'aim') { this.fireAim(w); return; }
       if (p.mode === 'lord') {
         this.ui.lordDrag = null;
@@ -297,13 +517,16 @@ export class BattleController {
       this.tap(w);
     };
     this.onLeave = () => {
-      this.ui.hover = null;
-      if (this.ui.aim && !this.ptr) { this.ui.aim.x = undefined; this.ui.aim.y = undefined; }
+      if (!this.ptr) {
+        this.ui.hover = null;
+        if (this.ui.ghost && this.sel) this.ui.ghost = null;
+        if (this.ui.aim) { this.ui.aim.x = undefined; this.ui.aim.y = undefined; }
+      }
     };
-    // Esc on a PC keyboard: back out of aiming or a menu, otherwise pause
+    // Esc on a PC keyboard: back out of placing, aiming or a menu, otherwise pause
     this.onKey = e => {
       if (e.key !== 'Escape' || this.ended) return;
-      if (this.ui.aim || this.popupKind) this.cancelAction();
+      if (this.sel || this.ui.aim || this.popupKind || this.genInfoKey) this.cancelAction();
       else if (!this.game.paused) this.game.pause();
     };
     cv.addEventListener('pointerdown', this.onDown);
@@ -314,26 +537,24 @@ export class BattleController {
     window.addEventListener('keydown', this.onKey);
   }
 
-  // Mouse only: the aiming circle follows the pointer, things you can click get a hand cursor.
+  // Mouse only: the placing preview and aiming circle follow the pointer; clickable things
+  // get a hand cursor.
   hover(e) {
     if (this.game.paused || this.ended) return;
     const w = this.view.toWorld(e.clientX, e.clientY);
     let cursor = 'default';
-    let hov = null;
-    if (this.ui.aim) {
+    if (this.sel) {
+      this.ghostAt(w);
+      cursor = 'crosshair';
+    } else if (this.ui.aim) {
       this.ui.aim.x = w.x;
       this.ui.aim.y = w.y;
       cursor = 'crosshair';
     } else {
       const L = this.sim.lord;
       if (!L.dead && Math.hypot(w.x - L.x, w.y - (L.y - 20)) < LORD_TAP) cursor = 'grab';
-      else {
-        const sq = this.squadAt(w);
-        const spot = sq ? this.sim.spots[sq.spot] : this.spotAt(w);
-        if (spot) { cursor = 'pointer'; hov = spot.id; }
-      }
+      else if (this.squadAt(w)) cursor = 'pointer';
     }
-    this.ui.hover = hov;
     this.setCursor(cursor);
   }
 
@@ -344,7 +565,9 @@ export class BattleController {
   }
 
   cancelAction() {
-    if (this.ui.aim) { this.setAim(null); sfx.select(); }
+    if (this.sel) { this.select(null); sfx.select(); }
+    else if (this.genInfoKey) { this.closeGenInfo(); sfx.select(); }
+    else if (this.ui.aim) { this.setAim(null); sfx.select(); }
     else if (this.popupKind) { this.closePopup(); sfx.select(); }
   }
 
@@ -356,37 +579,26 @@ export class BattleController {
     cv.removeEventListener('pointercancel', this.onUp);
     cv.removeEventListener('pointerleave', this.onLeave);
     window.removeEventListener('keydown', this.onKey);
+    window.removeEventListener('resize', this.measureInset);
     cv.style.cursor = '';
     clearTimeout(this.bannerT);
     clearTimeout(this.toastT);
     this.root.innerHTML = '';
   }
 
-  spotAt(w) {
-    let best = null, bd = SPOT_TAP;
-    for (const s of this.sim.spots) {
-      const d = Math.hypot(s.x - w.x, s.y - (w.y + 6));
-      if (d < bd) { bd = d; best = s; }
-    }
-    return best;
-  }
-
   squadAt(w) {
-    let best = null, bd = 34;
+    let best = null, bd = SQUAD_TAP;
     for (const q of this.sim.squads) {
-      const melee = TROOPS[q.type].melee;
-      const x = melee ? q.x : q.sx, y = melee ? q.y : q.sy;
-      const d = Math.hypot(x - w.x, y - 12 - w.y);
+      const d = Math.min(Math.hypot(q.x - w.x, q.y - 12 - w.y), Math.hypot(q.hx - w.x, q.hy - 10 - w.y));
       if (d < bd) { bd = d; best = q; }
     }
     return best;
   }
 
   tap(w) {
-    const spot = this.spotAt(w);
-    const squad = this.squadAt(w) || (spot && spot.squad);
+    if (this.genInfoKey) this.closeGenInfo();
+    const squad = this.squadAt(w);
     if (squad) { this.openSquad(squad); return; }
-    if (spot && !spot.squad) { this.openSpot(spot); return; }
     if (this.popupKind) { this.closePopup(); return; }
     // tapping open ground sends the lord there
     if (this.sim.moveLord(w.x, w.y)) {
@@ -395,7 +607,7 @@ export class BattleController {
     }
   }
 
-  // ---- spot / squad menus ---------------------------------------------------------------
+  // ---- unit menu ---------------------------------------------------------------------------
 
   placePopup(x, y) {
     const p = this.popup;
@@ -403,7 +615,7 @@ export class BattleController {
     const s = this.view.toScreen(x, y);
     p.classList.remove('hidden');
     const r = p.getBoundingClientRect();
-    const W = window.innerWidth, H = window.innerHeight;
+    const W = window.innerWidth - (this.view.insetR || 0), H = window.innerHeight;
     let left = s.x - r.width / 2;
     let top = s.y + 36;
     if (top + r.height > H - 8) top = s.y - r.height - 40;
@@ -417,88 +629,8 @@ export class BattleController {
     this.popup.classList.add('hidden');
     this.popup.innerHTML = '';
     this.popupKind = null;
-    this.ui.spot = null;
     this.ui.squad = null;
     this.ui.preview = null;
-  }
-
-  // Types the coming wave has, for ▲ marks on troop buttons.
-  threatTypes() {
-    const w = this.sim.state === 'ready' || this.sim.nextT !== null ? this.sim.nextWave() : this.sim.waves[this.sim.waveIdx];
-    return w ? Object.keys(waveSummary(w)) : [];
-  }
-
-  openSpot(spot) {
-    sfx.select();
-    this.closePopup();
-    this.popupKind = 'spot';
-    this.ui.spot = spot.id;
-    const sim = this.sim;
-    const types = TROOP_KEYS.filter(t => (this.setup.roster[t] || 0) > 0);
-    const threats = this.threatTypes();
-    const mark = t => {
-      const lv = bestLevel(t, threats);
-      return lv > 0 ? `<em class="up${lv > 1 ? ' very' : ''}">${COUNTER_MARK[lv]}</em>` : '';
-    };
-    const gens = sim.generals;
-    if (!types.length && !gens.length) {
-      this.popup.innerHTML = '<div class="pop-title">데려온 부대가 없어요</div>';
-    } else {
-      this.popup.innerHTML = `
-        <div class="pop-title">어떤 부대를 배치할까요?</div>
-        ${gens.length ? `<div class="gen-row">${gens.map(g => `
-          <button class="tbtn gbtn" data-g="${g.key}" type="button">
-            <img src="${generalIcon(g.type, GENERALS[g.key].letter, this.us, 64)}" alt="">
-            <span class="tn">${GENERALS[g.key].name}${mark(g.type)}</span>
-            <span class="tcost free">무료</span>
-            <span class="tleft"></span>
-          </button>`).join('')}</div>` : ''}
-        <div class="troop-grid">
-          ${types.map(t => `
-            <button class="tbtn" data-t="${t}" type="button">
-              <img src="${troopIcon(t, this.us, 64)}" alt="">
-              <span class="tn">${TROOPS[t].name}${mark(t)}</span>
-              <span class="tcost">🌾${TROOPS[t].cost}</span>
-              <span class="tleft">남은 ${sim.roster[t] || 0}</span>
-            </button>`).join('')}
-        </div>
-        <div class="pop-note">▲▲ 아주 강함 · ▲ 강함 (이번 웨이브 적에게)</div>`;
-      for (const b of this.popup.querySelectorAll('.tbtn')) {
-        b.addEventListener('click', e => {
-          e.stopPropagation();
-          if (b.dataset.g) this.deployGeneral(spot, b.dataset.g);
-          else this.deploy(spot, b.dataset.t);
-        });
-      }
-    }
-    this.placePopup(spot.x, spot.y);
-    this.refreshPopupCosts();
-  }
-
-  deployGeneral(spot, key) {
-    const r = this.sim.deployGeneral(spot.id, key);
-    if (!r.ok) {
-      sfx.denied();
-      const g = this.sim.generals.find(x => x.key === key);
-      this.toast(r.reason === 'field' ? '이미 전장에 있어요' : r.reason === 'wait' ? `${Math.ceil(g.waitT)}초 뒤에 배치할 수 있어요` : '여기에는 배치할 수 없어요');
-      return;
-    }
-    sfx.horn();
-    this.closePopup();
-    if (this.tutorial === 1) this.advanceTutorial(1);
-  }
-
-  deploy(spot, t) {
-    const r = this.sim.deploy(spot.id, t);
-    if (!r.ok) {
-      sfx.denied();
-      this.toast(r.reason === 'food' ? '군량🌾이 모자라요' : r.reason === 'roster' ? '남은 부대가 없어요' : '여기에는 배치할 수 없어요');
-      return;
-    }
-    sfx.deploy();
-    this.closePopup();
-    if (this.tutorial === 1) this.advanceTutorial(1);
-    else if (this.tutorial === 2 && this.sim.squads.length >= 2) this.refreshTutorial();
   }
 
   relHtml(type) {
@@ -510,23 +642,25 @@ export class BattleController {
   openSquad(q) {
     sfx.select();
     this.closePopup();
+    this.closeGenInfo();
     this.popupKind = 'squad';
     this.ui.squad = q;
     const T = TROOPS[q.type];
+    const area = T.melee ? '<div class="pop-note">점선 원 = 이 부대가 움직이며 막는 구역</div>' : '';
     if (q.gen) {
       const G = GENERALS[q.general];
       this.popup.innerHTML = `
         <div class="pop-title"><img src="${generalIcon(q.type, G.letter, this.us, 48)}" alt=""> ${G.name} <small>${T.name} 장수</small></div>
         <div class="pop-hp"><div class="bar"><i style="width:${(q.hp / q.maxHp) * 100}%"></i></div></div>
         <div class="pop-skill">✨ <b>${G.skill}</b>: ${GEN_SPECIALS[G.kind].text}</div>
-        ${this.relHtml(q.type)}
+        ${this.relHtml(q.type)}${area}
         <div class="pop-btns"><button class="pbtn retreat" type="button">↩ 다른 자리로 옮기기</button></div>`;
     } else {
       const lv = this.setup.troops[q.type].lv;
       this.popup.innerHTML = `
         <div class="pop-title"><img src="${troopIcon(q.type, this.us, 48)}" alt=""> ${T.name} <span class="stars">${'★'.repeat(q.star)}</span> <small>Lv${lv}</small></div>
         <div class="pop-hp"><div class="bar"><i style="width:${(q.hp / q.maxHp) * 100}%"></i></div></div>
-        ${this.relHtml(q.type)}
+        ${this.relHtml(q.type)}${area}
         <div class="pop-btns">
           <button class="pbtn promote" type="button"></button>
           <button class="pbtn retreat" type="button"></button>
@@ -540,7 +674,7 @@ export class BattleController {
           this.openSquad(q);
         } else {
           sfx.denied();
-          this.toast(r.reason === 'food' ? '군량🌾이 모자라요' : '이미 최고 등급이에요');
+          this.toast(r.reason === 'food' ? PLACE_ERR.food : '이미 최고 등급이에요');
         }
       });
     }
@@ -549,48 +683,91 @@ export class BattleController {
       this.sim.retreat(q.id);
       sfx.select();
       this.closePopup();
-      if (q.gen) this.toast(`${GENERALS[q.general].name}: 깃발 자리를 눌러 다시 세우세요`);
+      if (q.gen) {
+        this.select({ kind: 'gen', key: q.general });
+        this.toast(`${GENERALS[q.general].name}: 새 자리를 고르세요`);
+      }
     });
-    this.placePopup(T.melee ? q.x : q.sx, T.melee ? q.y : q.sy);
-    this.refreshPopupCosts();
+    this.placePopup(q.x, q.y);
+    this.refreshPopup();
   }
 
-  refreshPopupCosts() {
+  refreshPopup() {
     const sim = this.sim;
-    if (this.popupKind === 'spot') {
-      for (const b of this.popup.querySelectorAll('.tbtn')) {
-        const tl = b.querySelector('.tleft');
-        let s;
-        if (b.dataset.g) {
-          const g = sim.generals.find(x => x.key === b.dataset.g);
-          const busy = g.state === 'field' || g.waitT > 0;
-          b.classList.toggle('none-left', busy);
-          s = g.state === 'field' ? '전장에 있음' : g.waitT > 0 ? `${Math.ceil(g.waitT)}초 뒤` : '배치 가능';
-        } else {
-          const t = b.dataset.t;
-          const left = sim.roster[t] || 0;
-          b.classList.toggle('no-food', sim.food < TROOPS[t].cost);
-          b.classList.toggle('none-left', left <= 0);
-          s = `남은 ${left}`;
-        }
-        if (tl.textContent !== s) tl.textContent = s;
-      }
-    } else if (this.popupKind === 'squad') {
-      const q = this.ui.squad;
-      if (!q || !sim.squads.includes(q)) { this.closePopup(); return; }
-      const bar = this.popup.querySelector('.pop-hp i');
-      if (bar) bar.style.width = `${(q.hp / q.maxHp) * 100}%`;
-      if (q.gen) return;
-      const cost = sim.starCost(q);
-      const pb = this.popup.querySelector('.promote');
-      const ptxt = cost === null ? '★ 최고 등급' : `⬆ 승급 ★${q.star + 1} · 🌾${cost}`;
-      if (pb.textContent !== ptxt) pb.textContent = ptxt;
-      pb.disabled = cost === null;
-      pb.classList.toggle('no-food', cost !== null && sim.food < cost);
-      const rb = this.popup.querySelector('.retreat');
-      const rtxt = `↩ 철수 +🌾${Math.floor(q.spent * 0.5)}`;
-      if (rb.textContent !== rtxt) rb.textContent = rtxt;
+    const q = this.ui.squad;
+    if (!q || !sim.squads.includes(q)) { this.closePopup(); return; }
+    const bar = this.popup.querySelector('.pop-hp i');
+    if (bar) bar.style.width = `${(q.hp / q.maxHp) * 100}%`;
+    if (q.gen) return;
+    const cost = sim.starCost(q);
+    const pb = this.popup.querySelector('.promote');
+    const ptxt = cost === null ? '★ 최고 등급' : `⬆ 승급 ★${q.star + 1} · 🌾${cost}`;
+    if (pb.textContent !== ptxt) pb.textContent = ptxt;
+    pb.disabled = cost === null;
+    pb.classList.toggle('no-food', cost !== null && sim.food < cost);
+    const rb = this.popup.querySelector('.retreat');
+    const rtxt = `↩ 철수 +🌾${Math.floor(q.spent * 0.5)}`;
+    if (rb.textContent !== rtxt) rb.textContent = rtxt;
+  }
+
+  // ---- a general's info box (the i on its card) ------------------------------------------
+
+  toggleGenInfo(key) {
+    sfx.select();
+    if (this.genInfoKey === key) { this.closeGenInfo(); return; }
+    this.closePopup();
+    this.genInfoKey = key;
+    this.paintGenInfo(true);
+  }
+
+  closeGenInfo() {
+    this.genInfoKey = null;
+    const box = this.$('.gen-info');
+    box.classList.add('hidden');
+    box.innerHTML = '';
+  }
+
+  paintGenInfo(full) {
+    const box = this.$('.gen-info');
+    const g = this.sim.generals.find(x => x.key === this.genInfoKey);
+    if (!g) { this.closeGenInfo(); return; }
+    const G = GENERALS[g.key];
+    const st = this.genStatus(g);
+    if (full) {
+      box.innerHTML = `
+        <div class="pop-title"><img src="${generalIcon(g.type, G.letter, this.us, 48)}" alt=""> ${G.name} <small>${TROOPS[g.type].name} 장수</small></div>
+        <div class="pop-skill">✨ <b>${G.skill}</b>: ${GEN_SPECIALS[g.kind].text}</div>
+        ${this.relHtml(g.type)}
+        <div class="gi-state"></div>
+        <div class="pop-hp gi-hp"><div class="bar"><i></i></div></div>
+        <div class="pop-btns"><button class="pbtn gi-act" type="button"></button></div>`;
+      const edge = (this.invGen || this.inv).getBoundingClientRect().left;
+      box.style.right = `${window.innerWidth - edge + 6}px`;
+      box.classList.remove('hidden');
+      box.querySelector('.gi-act').addEventListener('click', e => {
+        e.stopPropagation();
+        const cur = this.sim.generals.find(x => x.key === this.genInfoKey);
+        if (!cur) return;
+        if (cur.state === 'field') this.sim.retreat(cur.squad.id);
+        else if (cur.waitT > 0) { sfx.denied(); return; }
+        sfx.select();
+        this.closeGenInfo();
+        this.select({ kind: 'gen', key: cur.key });
+      });
     }
+    const stateEl = box.querySelector('.gi-state');
+    const sp = GEN_SPECIALS[g.kind];
+    let extra = '';
+    if (g.state === 'field' && sp.cd) extra = g.squad.specT > 0 ? ` · ${G.skill} ${Math.ceil(g.squad.specT)}초 뒤` : ` · ${G.skill} 준비 완료!`;
+    const txt = `${st.text}${extra}`;
+    if (stateEl.textContent !== txt) stateEl.textContent = txt;
+    const hp = box.querySelector('.gi-hp');
+    hp.classList.toggle('hidden', g.state !== 'field');
+    if (g.state === 'field') hp.querySelector('i').style.width = `${(g.squad.hp / g.squad.maxHp) * 100}%`;
+    const act = box.querySelector('.gi-act');
+    const label = g.state === 'field' ? '↩ 다른 자리로 옮기기' : g.waitT > 0 ? `⏱ ${Math.ceil(g.waitT)}초 기다려요` : '📍 놓을 곳 고르기';
+    if (act.textContent !== label) act.textContent = label;
+    act.disabled = g.state !== 'field' && g.waitT > 0;
   }
 
   // ---- skills, items, waves --------------------------------------------------------------
@@ -634,9 +811,10 @@ export class BattleController {
   }
 
   setAim(aim) {
+    if (aim && this.sel) { this.sel = null; this.ui.ghost = null; }
     this.ui.aim = aim;
     const hint = this.$('.aim-hint');
-    hint.classList.toggle('hidden', !aim);
+    hint.classList.toggle('hidden', !aim && !this.sel);
     if (aim) hint.querySelector('.txt').textContent = aim.label;
   }
 
@@ -659,8 +837,7 @@ export class BattleController {
   }
 
   callWave() {
-    const sim = this.sim;
-    const r = sim.callWave();
+    const r = this.sim.callWave();
     if (!r.ok) return;
     sfx.drum();
     if (r.bonus) this.toast(`일찍 출격! +${r.bonus}🌾`);
@@ -679,6 +856,8 @@ export class BattleController {
       this.ended = true;
       this.endT = 1.6;
       this.closePopup();
+      this.closeGenInfo();
+      this.select(null);
       this.setAim(null);
       if (sim.state === 'won') { sfx.clear(); this.banner('승리!', 'win', 3000); }
       else { sfx.death(); this.banner('성문이 뚫렸다...', 'lose', 3000); }
@@ -729,7 +908,6 @@ export class BattleController {
         case 'launch': sfx.stone(); break;
         case 'boom': if (!e.big) sfx.smash(); break;
         case 'cast': sfx.magic(); break;
-        case 'promote': break;
         case 'bossSkill':
           this.banner(`${e.name}: ${{ charge: '돌격!', summon: '지원군을 불렀다!', heal: '요술로 병사를 치료!', rally: '호령! 병사들이 강해졌다!', volley: '일제 사격!' }[e.skill]}`, 'boss', 1500);
           break;
@@ -742,6 +920,7 @@ export class BattleController {
   }
 
   render(ctx, view, dt) {
+    if (!this.view.insetR && this.inv.offsetWidth) this.measureInset();
     this.view.render(ctx, view, this.ui, dt);
     this.updateHud();
   }
