@@ -35,6 +35,21 @@ const tap = el => {
   el.click();
 };
 
+async function loreChecks() {
+  for (const lord of LORD_KEYS) {
+    let lore = null;
+    try { lore = (await import(`./lore/${lord}.js`)).default; } catch (e) { fail(`lore ${lord}: ${e.message}`); continue; }
+    if (!lore.prologue?.paras?.length || !lore.ending?.paras?.length) fail(`lore ${lord}: prologue/ending`);
+    const sizes = [];
+    for (const st of STORIES[lord].stages) {
+      const ch = lore.stages?.[st.id];
+      if (!ch || ch.paras.length < 4 || !ch.fact) { fail(`lore ${st.id}: missing or short`); continue; }
+      sizes.push(ch.paras.join('').length);
+    }
+    out.checks.push({ lore: lord, chapters: sizes.length, minChars: Math.min(...sizes), maxChars: Math.max(...sizes) });
+  }
+}
+
 function dataChecks() {
   for (const lord of LORD_KEYS) {
     const st = STORIES[lord];
@@ -217,7 +232,13 @@ async function uiFlow(game) {
   }
   await waitFor(() => game.screenName === 'result');
   step(`result:${q('.result h1').textContent}`);
-  tap(q('.result .base'));
+  // the cleared stage's chapter opens in the story book
+  tap(q('.read-lore'));
+  await waitFor(() => game.screenName === 'storybook' && document.querySelectorAll('.sb-text p').length > 0, 6000);
+  if (!game.save.read.includes(game.story.stages[0].id)) fail('story chapter not marked as read');
+  if (document.querySelectorAll('.sb-text p').length < 4) fail('story chapter too short');
+  step('storybook');
+  tap(q('.storybook .back-btn'));
   await waitFor(() => game.screenName === 'base');
   tap(q('.tile.exit'));
   await waitFor(() => game.screenName === 'title');
@@ -248,6 +269,7 @@ async function shot(game, name, params) {
   else if (name === 'equip') game.show('equip', {});
   else if (name === 'counters') game.show('counters', {});
   else if (name === 'generals') game.show('generals', {});
+  else if (name === 'storybook') { s.read = []; game.show('storybook', { chapter: STORIES[lord].stages[n - 2]?.id || 'prologue' }); }
   else if (name === 'picker') { game.show('prep', { stageIdx: n - 1 }); document.querySelector('.gp').click(); }
   else if (name === 'result') {
     const r = { stageIdx: n - 1, won: true, stars: 3, gate: 19, kills: 40, itemsUsed: {}, wavesReached: 5, totalWaves: 5 };
@@ -284,6 +306,7 @@ export async function run({ game, params }) {
   }
   try { await musicCheck(); } catch (e) { fail(`music: ${e.stack || e}`); }
   try { dataChecks(); } catch (e) { fail(`data: ${e.stack || e}`); }
+  try { await loreChecks(); } catch (e) { fail(`lore: ${e.stack || e}`); }
   try { botBattles(); } catch (e) { fail(`bots: ${e.stack || e}`); }
   try { await uiFlow(game); } catch (e) { fail(`ui: ${e.stack || e} (after ${out.flow.join(' > ')})`); }
   report();

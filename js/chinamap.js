@@ -6,11 +6,14 @@ import { LAND, RIVERS, MOUNTAINS, PROVINCES, PLACES } from './maps.js';
 export const MAP_W = 1200;
 export const MAP_H = 800;
 
-// Fit the map inside (w, h) with a margin: returns scale and offsets in CSS px.
-export function mapFit(w, h, top = 0, bottom = 0) {
-  const ah = h - top - bottom;
-  const s = Math.min(w / (MAP_W - 160), ah / (MAP_H - 60));
-  return { s, ox: (w - MAP_W * s) / 2 - 40 * s, oy: top + (ah - MAP_H * s) / 2 };
+// The part of China the stories happen in (map units).
+const VIEW = { x0: 300, x1: 1120, y0: 60, y1: 770 };
+
+// Fit that part into the screen rectangle (left, top, w, h): scale and offsets in CSS px.
+export function mapFit(left, top, w, h) {
+  const vw = VIEW.x1 - VIEW.x0, vh = VIEW.y1 - VIEW.y0;
+  const s = Math.min(w / vw, h / vh);
+  return { s, ox: left + (w - vw * s) / 2 - VIEW.x0 * s, oy: top + (h - vh * s) / 2 - VIEW.y0 * s };
 }
 
 function poly(ctx, pts) {

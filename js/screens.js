@@ -288,10 +288,17 @@ function baseScreen(game) {
       ${header(game)}
       <div class="base-main">
         <button class="go-card" type="button">
-          <div class="go-kicker">${done ? '🎉 천하통일 달성! 다시 도전해서 별을 모아요' : `⚔ 다음 출진 · ${ni + 1}번째 지역`}</div>
-          <div class="go-title">${done ? '천하 지도' : `${st.title}`}</div>
-          <div class="go-sub">${done ? '' : `📍 ${PLACES[st.loc]?.name || ''} · ${st.year}년 · 권장 Lv ${recLevel(ni + 1)}`}</div>
-          <div class="go-btn">🗺 천하 지도 열기 ▶</div>
+          <div class="go-left">
+            <div class="go-kicker">${done ? '🎉 천하통일 달성!' : `⚔ 다음 출진 · ${ni + 1}번째 지역`}</div>
+            <div class="go-title">${done ? '천하 지도' : `${st.title}`}</div>
+            <div class="go-sub">${done ? '다시 도전해서 별을 모아요' : `📍 ${PLACES[st.loc]?.name || ''} · ${st.year}년<br>권장 Lv ${recLevel(ni + 1)}`}</div>
+            <div class="go-btn">🗺 천하 지도 열기 ▶</div>
+          </div>
+          <div class="go-story">${done
+            ? `<div class="gs-h">🎉 천하통일 이야기</div>${story.ending.map(l => `<p>${l}</p>`).join('')}`
+            : `${ni > 0 ? `<div class="gs-h">📖 지난 이야기</div><div class="gs-prev">${story.stages[ni - 1].outro.map(l => `<p>${l}</p>`).join('')}</div>` : ''}
+               <div class="gs-h">📜 이번 이야기</div>${st.intro.map(l => `<p>${l}</p>`).join('')}`}
+          </div>
         </button>
         <div class="tiles">
           <button class="tile" data-go="barracks" type="button"><span class="ti">🏯</span><b>병영</b><small>병종 강화</small></button>
@@ -299,7 +306,7 @@ function baseScreen(game) {
           <button class="tile" data-go="equip" type="button"><span class="ti">🛡️</span><b>장비</b><small>장착·강화·구매 ${newEq ? `<em class="badge">새 ${newEq}</em>` : ''}</small></button>
           <button class="tile" data-go="counters" type="button"><span class="ti">📖</span><b>상성표</b><small>누가 누구에게 강할까?</small></button>
           <button class="tile" data-go="generals" type="button"><span class="ti">🎖️</span><b>장수</b><small>${unlockedGenerals(s).length}명 합류</small></button>
-          <button class="tile" data-go="story" type="button"><span class="ti">📜</span><b>이야기</b><small>프롤로그 다시 보기</small></button>
+          <button class="tile" data-go="storybook" type="button"><span class="ti">📜</span><b>이야기</b><small>${unreadChapters(s) ? `<em class="badge">새 이야기 ${unreadChapters(s)}</em>` : `${storyChapters(s).filter(c => c.open).length}장까지 읽을 수 있어요`}</small></button>
           <button class="tile exit" data-go="exit" type="button"><span class="ti">🚪</span><b>저장하고 나가기</b><small>처음 화면으로</small></button>
         </div>
       </div>
@@ -333,33 +340,46 @@ function mapScreen(game, { sel = null } = {}) {
         <div class="map-title">🗺 천하 지도 <small>${LORDS[s.lord].name}의 이야기 · ${s.progress}/${STAGE_COUNT}</small></div>
       </div>
       <div class="markers"></div>
-      <div class="map-card"></div>
+      <aside class="map-story"></aside>
     </div>`);
   el.querySelector('.back-btn').addEventListener('click', () => { sfx.select(); game.show('base'); });
   const markers = el.querySelector('.markers');
-  const card = el.querySelector('.map-card');
+  const panel = el.querySelector('.map-story');
 
-  const paintCard = () => {
+  // The story of the chosen place, for the child (and parent) to read before going.
+  const paintStory = () => {
     const i = selected;
     const st = story.stages[i];
     const rec = recLevel(i + 1);
     const stars = s.stages[i].stars;
+    const cleared = s.stages[i].clears > 0;
     const sleep = noReward(s, i);
-    const reward = s.stages[i].clears === 0 && st.reward ? `<div class="mc-reward">🎁 첫 클리어 보상: ${EQUIPS[st.reward].icon} ${gradeName(st.reward)}</div>` : '';
-    card.innerHTML = `
+    const prev = i > 0 ? story.stages[i - 1] : null;
+    const reward = !cleared && st.reward ? `<div class="mc-reward">🎁 첫 클리어 보상: ${EQUIPS[st.reward].icon} ${gradeName(st.reward)}</div>` : '';
+    panel.innerHTML = `
       <div class="mc-head">
         <span class="mc-no">${i + 1}</span>
         <div><div class="mc-title">${st.title}</div>
         <div class="mc-sub">📍 ${PLACES[st.loc]?.name || ''} · ${st.year}년 · 적: ${FACTIONS[st.enemy]?.army || ''}</div></div>
         <div class="mc-stars">${[1, 2, 3].map(k => `<span class="${k <= stars ? 'on' : ''}">★</span>`).join('')}</div>
       </div>
-      <div class="mc-info">
-        <span class="${s.level < rec ? 'warn' : ''}">권장 Lv ${rec} (지금 Lv ${s.level})</span>
-        ${sleep ? '<span class="sleep">💤 레벨이 높아서 보상이 없어요</span>' : `<span>💰 ${fmt(s.stages[i].clears ? Math.round(stageGold(i + 1) * 0.5) : stageGold(i + 1))}</span>`}
+      <div class="ms-body">
+        ${i === 0 ? `<div class="ms-h">📖 지난 이야기</div><div class="ms-text prev">${story.prologue.map(l => `<p>${l}</p>`).join('')}</div>`
+          : prev ? `<div class="ms-h">📖 지난 이야기 · ${prev.title}</div><div class="ms-text prev">${prev.outro.map(l => `<p>${l}</p>`).join('')}</div>` : ''}
+        <div class="ms-h">📜 이번 이야기</div>
+        <div class="ms-text">${st.intro.map(l => `<p>${l}</p>`).join('')}</div>
+        ${cleared ? `<div class="ms-h">🏁 그 뒤</div><div class="ms-text outro">${st.outro.map(l => `<p>${l}</p>`).join('')}</div>` : ''}
       </div>
-      ${reward}
-      <button class="btn primary mc-go" type="button">🏕 정비하러 가기 ▶</button>`;
-    card.querySelector('.mc-go').addEventListener('click', e => {
+      <div class="ms-foot">
+        <div class="mc-info">
+          <span class="${s.level < rec ? 'warn' : ''}">권장 Lv ${rec} (지금 Lv ${s.level})</span>
+          ${sleep ? '<span class="sleep">💤 레벨이 높아서 보상이 없어요</span>' : `<span>💰 ${fmt(s.stages[i].clears ? Math.round(stageGold(i + 1) * 0.5) : stageGold(i + 1))}</span>`}
+        </div>
+        ${reward}
+        <button class="btn primary mc-go" type="button">🏕 정비하러 가기 ▶</button>
+      </div>`;
+    panel.querySelector('.ms-body').scrollTop = 0;
+    panel.querySelector('.mc-go').addEventListener('click', e => {
       e.stopPropagation();
       sfx.confirm();
       game.show('prep', { stageIdx: selected });
@@ -368,7 +388,9 @@ function mapScreen(game, { sel = null } = {}) {
 
   const layout = () => {
     const w = el.clientWidth || window.innerWidth, hh = el.clientHeight || window.innerHeight;
-    const fit = mapFit(w * 0.98, hh, 56, 10);
+    const pr = panel.getBoundingClientRect();
+    const left = pr.right + 8;
+    const fit = mapFit(left, 58, Math.max(200, w - left - 12), hh - 58 - 12);
     const route = story.stages.map((st, i) => ({ loc: st.loc, state: i < s.progress ? 'done' : i === s.progress ? 'next' : 'locked' }));
     drawChinaMap(el.querySelector('.map-canvas'), w, hh, Math.min(2, window.devicePixelRatio || 1), fit, route, F.color);
     markers.innerHTML = '';
@@ -393,13 +415,13 @@ function mapScreen(game, { sel = null } = {}) {
           sfx.select();
           markers.querySelectorAll('.mk').forEach(x => x.classList.remove('sel'));
           m.classList.add('sel');
-          paintCard();
+          paintStory();
         });
       }
       markers.appendChild(m);
     });
   };
-  paintCard();
+  paintStory();
   const onResize = () => layout();
   return {
     el,
@@ -869,6 +891,7 @@ function resultScreen(game, { r, out }) {
     const key = LORDS[s.lord].skills[i];
     lines.push(`<div class="rw big">✨ 새 스킬: ${SKILLS[key].icon} ${SKILLS[key].name}</div>`);
   }
+  if (out.first) lines.push(`<div class="rw big">📜 새 이야기가 열렸어요: <b>제${r.stageIdx + 1}장 · ${st.title}</b> <small>이야기책에서 자세히 읽을 수 있어요</small></div>`);
   if (out.item) lines.push(`<div class="rw big">🎁 ${EQUIPS[out.item].icon} ${gradeName(out.item)} ${out.itemDup ? '<small>(이미 있어서 골드로 받았어요)</small>' : '획득! <small>장비에서 장착하세요</small>'}</div>`);
   for (const k of out.newGenerals || []) lines.push(`<div class="rw big"><img class="ticon" src="${generalIcon(GENERALS[k].type, GENERALS[k].letter, us(s), 48)}" alt=""> 새 장수 합류: <b>${GENERALS[k].name}</b>! <small>${GENERALS[k].skill} · 정비에서 데려갈 수 있어요</small></div>`);
   for (const t of out.unlocked) lines.push(`<div class="rw big">${troopImg(s, t, 40)} 새 병종: <b>${TROOPS[t].name}</b>! <small>병영과 정비에서 쓸 수 있어요</small></div>`);
@@ -892,6 +915,7 @@ function resultScreen(game, { r, out }) {
           ${out.ending ? '<button class="btn primary big ending" type="button">🎉 천하통일!</button>' : ''}
           ${!out.ending && hasNext ? '<button class="btn primary next" type="button">▶ 다음 지역 정비</button>' : ''}
           ${!r.won ? '<button class="btn primary retry" type="button">↻ 다시 정비하기</button>' : ''}
+          ${r.won ? '<button class="btn read-lore" type="button">📜 이야기 읽기</button>' : ''}
           <button class="btn map" type="button">🗺 지도</button>
           <button class="btn base" type="button">🏯 본영</button>
         </div>
@@ -903,6 +927,7 @@ function resultScreen(game, { r, out }) {
   on('.map', () => game.show('map', { sel: hasNext ? r.stageIdx + 1 : r.stageIdx }));
   on('.base', () => game.show('base'));
   on('.ending', () => game.showEnding());
+  on('.read-lore', () => game.show('storybook', { chapter: st.id }));
   return { el, music: null };
 }
 
@@ -1028,7 +1053,108 @@ function generalsScreen(game, arg = {}) {
   return { el, music: 'base' };
 }
 
+// ---------------------------------------------------------------------------------
+
+// Story book chapters: the prologue, one per stage (opens when that stage is cleared), the ending.
+export function storyChapters(s) {
+  const story = storyOf(s);
+  const list = [{ key: 'prologue', kind: 'prologue', open: true }];
+  story.stages.forEach((st, i) => list.push({ key: st.id, kind: 'stage', idx: i, open: s.stages[i].clears > 0 }));
+  list.push({ key: 'ending', kind: 'ending', open: !!s.seen.ending });
+  return list;
+}
+export const unreadChapters = s => storyChapters(s).filter(c => c.open && !s.read.includes(c.key)).length;
+
+const loreCache = {};
+async function loadLore(lord) {
+  if (!loreCache[lord]) {
+    loreCache[lord] = import(`./lore/${lord}.js`).then(m => m.default).catch(() => null);
+  }
+  return loreCache[lord];
+}
+
+function storybookScreen(game, { chapter = null } = {}) {
+  const s = game.save;
+  const story = storyOf(s);
+  const L = LORDS[s.lord];
+  const list = storyChapters(s);
+  const lastOpen = [...list].reverse().find(c => c.open && c.kind === 'stage') || list[0];
+  let cur = list.find(c => c.key === chapter && c.open) || list.find(c => c.open && !s.read.includes(c.key)) || lastOpen;
+  let lore = null;
+  const el = h(`
+    <div class="screen storybook">
+      ${backBtn('← 본영')}
+      <h2 class="center-title">📜 ${L.name}의 이야기책 <small>지역을 깨면 새 장이 열려요</small></h2>
+      <div class="sb-cols">
+        <nav class="sb-toc"></nav>
+        <article class="sb-page"></article>
+      </div>
+    </div>`);
+  el.querySelector('.back-btn').addEventListener('click', () => { sfx.select(); game.persist(); game.show('base'); });
+  const toc = el.querySelector('.sb-toc');
+  const page = el.querySelector('.sb-page');
+
+  const label = c => (c.kind === 'prologue' ? '프롤로그' : c.kind === 'ending' ? '마지막 장 · 천하통일' : `제${c.idx + 1}장 · ${story.stages[c.idx].title}`);
+
+  const paintToc = () => {
+    toc.innerHTML = list.map(c => {
+      const next = c.kind === 'stage' && !c.open && c.idx === s.progress;
+      const text = c.open ? label(c) : next ? `🔒 제${c.idx + 1}장 · ${story.stages[c.idx].title}` : c.kind === 'ending' ? '🔒 마지막 장' : `🔒 제${c.idx + 1}장`;
+      const isNew = c.open && !s.read.includes(c.key);
+      return `<button class="sb-ch ${c.open ? '' : 'locked'} ${c === cur ? 'on' : ''}" data-k="${c.key}" type="button" ${c.open ? '' : 'disabled'}>${text}${isNew ? ' <em class="badge">새</em>' : ''}</button>`;
+    }).join('');
+    toc.querySelectorAll('.sb-ch:not(.locked)').forEach(b => b.addEventListener('click', () => {
+      cur = list.find(c => c.key === b.dataset.k);
+      sfx.select();
+      paintPage();
+    }));
+    toc.querySelector('.sb-ch.on')?.scrollIntoView({ block: 'nearest' });
+  };
+
+  const paintPage = () => {
+    const c = cur;
+    let title, meta = '', paras, fact = '';
+    if (c.kind === 'prologue') {
+      title = lore?.prologue?.title ? `프롤로그 · ${lore.prologue.title}` : '프롤로그';
+      paras = lore?.prologue?.paras || story.prologue;
+    } else if (c.kind === 'ending') {
+      title = lore?.ending?.title ? `마지막 장 · ${lore.ending.title}` : '마지막 장 · 천하통일';
+      paras = lore?.ending?.paras || story.ending;
+    } else {
+      const st = story.stages[c.idx];
+      const ch = lore?.stages?.[st.id];
+      title = `제${c.idx + 1}장 · ${st.title}`;
+      meta = `📍 ${PLACES[st.loc]?.name || ''} · ${st.year}년 · 상대: ${FACTIONS[st.enemy]?.army || ''}, ${st.boss.name}`;
+      paras = ch?.paras || [...st.intro, ...st.outro];
+      fact = ch?.fact || '';
+    }
+    const open = list.filter(x => x.open);
+    const i = open.indexOf(c);
+    const prev = open[i - 1], next = open[i + 1];
+    page.innerHTML = `
+      <h3 class="sb-title">${title}</h3>
+      ${meta ? `<div class="sb-meta">${meta}</div>` : ''}
+      <div class="sb-text">${paras.map(p => `<p>${p}</p>`).join('')}</div>
+      ${fact ? `<div class="sb-fact">💡 <b>알고 있나요?</b> ${fact}</div>` : ''}
+      <div class="sb-nav">
+        <button class="btn sb-prev" type="button" ${prev ? '' : 'disabled'}>◀ ${prev ? label(prev) : '처음'}</button>
+        <button class="btn primary sb-next" type="button" ${next ? '' : 'disabled'}>${next ? label(next) : '다음 장은 다음 지역을 깨면 열려요'} ▶</button>
+      </div>`;
+    page.scrollTop = 0;
+    page.querySelector('.sb-prev').addEventListener('click', () => { if (prev) { cur = prev; sfx.select(); paintPage(); } });
+    page.querySelector('.sb-next').addEventListener('click', () => { if (next) { cur = next; sfx.select(); paintPage(); } });
+    if (!s.read.includes(c.key)) { s.read = [...s.read, c.key]; game.persist(); }
+    paintToc();
+  };
+
+  page.innerHTML = '<p class="muted">이야기를 펼치는 중...</p>';
+  paintToc();
+  loadLore(s.lord).then(m => { lore = m; if (el.isConnected || true) paintPage(); });
+  return { el, music: 'base' };
+}
+
 export const SCREENS = {
+  storybook: storybookScreen,
   generals: generalsScreen,
   title: titleScreen,
   slots: slotsScreen,

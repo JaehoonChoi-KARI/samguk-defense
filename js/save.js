@@ -33,6 +33,7 @@ export function defaultSave(lord = null) {
     stages: Array.from({ length: STAGE_COUNT }, () => ({ stars: 0, clears: 0 })),
     progress: 0, // stages cleared at least once, in order
     seen: { prologue: false, ending: false, tutorial: false, counters: false },
+    read: [], // story book chapters already opened ('prologue', 'lb01', ..., 'ending')
     kills: 0,
     playSec: 0,
     updatedAt: 0,
@@ -76,6 +77,7 @@ export function sanitize(raw) {
   });
   s.progress = int(s.progress, 0, STAGE_COUNT, 0);
   s.seen = { ...d.seen, ...(raw.seen || {}) };
+  s.read = Array.isArray(raw.read) ? raw.read.filter(k => typeof k === 'string').slice(0, 64) : [];
   s.kills = int(s.kills, 0, 1e9, 0);
   s.playSec = int(s.playSec, 0, 1e9, 0);
   s.v = SAVE_VERSION;
