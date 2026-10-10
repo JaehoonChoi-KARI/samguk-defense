@@ -7,10 +7,12 @@ import {
   GENERALS, GEN_SPECIALS, GENERAL_PICKS, GENERAL_HP, GENERAL_ATK, generalsOf,
 } from './data.js';
 import { stageLayout } from './maps.js';
+import { talentFx, skillLevel } from './talents.js';
 import { buildWaves } from './waves.js';
 
+// Equipment and talents add up into one set of bonuses.
 export function equipTotals(save) {
-  const tot = {};
+  const tot = talentFx(save);
   for (const slot of ['weapon', 'armor', 'treasure']) {
     const key = save.equipped[slot];
     const it = key && save.equips.find(e => e.key === key);
@@ -42,9 +44,9 @@ export function troopStats(save, type) {
   const fx = equipTotals(save);
   const lv = save.troops[type] || 1;
   const m = troopLevelMult(lv);
-  let hpM = 1 + (tf.troopHp || 0) + (fx.troopHp || 0);
-  let atkM = 1 + (fx.troopAtk || 0);
-  let rangeM = 1;
+  let hpM = 1 + (tf.troopHp || 0) + (fx.troopHp || 0) + (fx[`hp_${type}`] || 0);
+  let atkM = 1 + (fx.troopAtk || 0) + (fx[`atk_${type}`] || 0);
+  let rangeM = 1 + (fx[`range_${type}`] || 0);
   if (!T.melee) {
     atkM += tf.rangedAtk || 0;
     rangeM += tf.rangedRange || 0;
@@ -60,7 +62,7 @@ export function troopStats(save, type) {
   };
 }
 
-export const lordLeadership = save => leadership(save.level);
+export const lordLeadership = save => leadership(save.level) + (equipTotals(save).lead || 0);
 export const rosterLead = roster => TROOP_KEYS.reduce((s, t) => s + (roster[t] || 0) * TROOPS[t].lead, 0);
 export const troopUnlocked = (save, t) => save.progress >= TROOP_UNLOCK[t];
 export const unlockedTroops = save => TROOP_KEYS.filter(t => troopUnlocked(save, t));
@@ -69,8 +71,8 @@ export const unlockedTroops = save => TROOP_KEYS.filter(t => troopUnlocked(save,
 export function skillList(save) {
   const fx = equipTotals(save);
   return LORDS[save.lord].skills.map((key, i) => {
-    const lv = save.skills[i] || 0;
-    if (!lv || save.level < SKILL_UNLOCK[i]) return null;
+    const lv = skillLevel(save, i);
+    if (!lv) return null;
     const def = SKILLS[key];
     return { key, lv, cd: def.cd * (1 - Math.min(0.5, fx.skillCd || 0)), power: def.power(lv) };
   });
@@ -120,6 +122,10 @@ export function battleSetup(save, stageIdx, stage, opts = {}) {
       starCost: (tf.starCost || 0) + (fx.starCost || 0),
       skillDmg: fx.skillDmg || 0,
       regen: tf.regen || 1,
+      counter: fx.counter || 0,
+      genSpec: Math.min(0.5, fx.genSpec || 0),
+      genRecover: fx.genRecover || 0,
+      lordRevive: fx.lordRevive || 0,
     },
   };
 }
@@ -139,8 +145,8 @@ export function generalStats(save, key) {
     key,
     type: G.type,
     kind: G.kind,
-    hp: Math.round(base.hp * GENERAL_HP),
-    atk: base.atk * GENERAL_ATK,
+    hp: Math.round(base.hp * GENERAL_HP * (1 + (equipTotals(save).genPower || 0))),
+    atk: base.atk * GENERAL_ATK * (1 + (equipTotals(save).genPower || 0)),
     cd: base.cd,
     range: Math.round(base.range * 1.15),
     block: TROOPS[G.type].melee ? (G.kind === 'guard' ? sp.block : 3) : 0,

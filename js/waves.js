@@ -20,8 +20,14 @@ const WEIGHT = { infantry: 1, spear: 1, archer: 1, cavalry: 1.5, strategist: 1.6
 // Seconds between soldiers of one group.
 const GAP = { infantry: 1.0, spear: 1.0, archer: 1.1, cavalry: 0.8, strategist: 1.4, catapult: 2.6 };
 
-export const waveCount = n => 4 + Math.floor((n - 1) / 4); // 4..8
-export const waveBudget = (n, i, w) => (5 + 1.0 * n) * (0.75 + 0.55 * (w > 1 ? i / (w - 1) : 1));
+export const waveCount = n => 6 + Math.floor((n - 1) / 8); // 6..8
+// The army grows through the story (6..12 waves' worth of soldiers); later stages pack it into
+// fewer, bigger waves that march in tighter, so a battle stays within about eight minutes.
+const armyWaves = n => 1.5 * (4 + Math.floor((n - 1) / 4));
+export const wavePack = n => armyWaves(n) / waveCount(n); // ≥ 1
+// Exponents on wavePack: how much bigger a wave gets and how much tighter it marches.
+export const WAVE_TUNE = { size: 0.6, tight: 1 };
+export const waveBudget = (n, i, w) => (5 + 1.0 * n) * wavePack(n) ** WAVE_TUNE.size * (0.75 + 0.55 * (w > 1 ? i / (w - 1) : 1));
 
 function pick(r, weights) {
   const total = weights.reduce((s, [, w]) => s + w, 0);
@@ -36,6 +42,7 @@ export function buildWaves(stage, n, pathCount) {
   const r = rng(stage.id);
   const mix = Object.entries(stage.mix || { infantry: 1 }).filter(([k, w]) => TROOP_KEYS.includes(k) && w > 0);
   const W = waveCount(n);
+  const tight = wavePack(n) ** WAVE_TUNE.tight;
   const waves = [];
   for (let i = 0; i < W; i++) {
     let budget = waveBudget(n, i, W);
@@ -56,8 +63,8 @@ export function buildWaves(stage, n, pathCount) {
       while (left > 0) {
         const size = Math.min(left, t === 'catapult' ? 2 : 3 + Math.floor(r() * 4));
         const path = pathCount > 1 ? (gi + i) % pathCount : 0;
-        groups.push({ type: t, count: size, path, gap: GAP[t], at: Math.round(at * 10) / 10 });
-        at += size * GAP[t] * 0.7 + 1.5 + r() * 1.5;
+        groups.push({ type: t, count: size, path, gap: GAP[t] / tight, at: Math.round(at * 10) / 10 });
+        at += (size * GAP[t] * 0.7 + 1.5 + r() * 1.5) / tight;
         left -= size;
         gi++;
       }

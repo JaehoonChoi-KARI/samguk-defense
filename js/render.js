@@ -676,7 +676,7 @@ export class BattleView {
       const sp = GEN_SPECIALS[G.kind];
       if (sp.cd) {
         // special charging around the general's feet; full circle = ready
-        const p = Math.max(0, Math.min(1, 1 - s.specT / sp.cd));
+        const p = Math.max(0, Math.min(1, 1 - s.specT / s.specCd));
         ctx.beginPath();
         ctx.ellipse(x, y, 26 * UNIT, 11 * UNIT, 0, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p);
         ctx.strokeStyle = p >= 1 ? '#fff3a0' : 'rgba(255,200,60,0.9)';

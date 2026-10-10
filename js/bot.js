@@ -275,26 +275,19 @@ export { FOES };
 // ---- a typical save for stage n (1..20), for tests and balance measurements -----------
 
 import { defaultSave } from './save.js';
-import { stageGold, troopUpCost, TROOP_UNLOCK, MAX_TROOP_LEVEL, EQUIPS, SKILL_UNLOCK, MAX_SKILL_LEVEL, DIFFS } from './data.js';
+import { stageGold, troopUpCost, TROOP_UNLOCK, MAX_TROOP_LEVEL, EQUIPS, DIFFS } from './data.js';
+import { autoTalents } from './talents.js';
 import { STORIES } from './stories.js';
 
 // A player who cleared stages 1..n-1 once with about 2.5 stars, kept a few items and spent
 // the rest of the gold evenly on the troop types they have.
-export function expectedSave(lord, n, diff = 1, { levelBonus = 0, troopBonus = 0 } = {}) {
+export function expectedSave(lord, n, diff = 1, { levelBonus = 0, troopBonus = 0, talents = 'plan' } = {}) {
   const s = defaultSave(lord);
   s.diff = diff;
   s.level = Math.max(1, n + levelBonus);
   s.progress = n - 1;
-  s.sp = 0;
-  SKILL_UNLOCK.forEach((lv, i) => { s.skills[i] = s.level >= lv ? 1 : 0; });
-  let sp = s.level - 1;
-  while (sp > 0) {
-    const open = [0, 1, 2].filter(i => s.skills[i] > 0 && s.skills[i] < MAX_SKILL_LEVEL);
-    if (!open.length) break;
-    open.sort((a, b) => s.skills[a] - s.skills[b]);
-    s.skills[open[0]]++;
-    sp--;
-  }
+  s.talents = {};
+  if (talents !== 'none') autoTalents(s, talents === 'plan' ? undefined : talents);
   let gold = 150;
   for (let k = 1; k < n; k++) gold += stageGold(k) * DIFFS[diff].gold * 1.62;
   gold -= (n - 1) * 110; // items

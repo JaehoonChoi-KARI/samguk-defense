@@ -298,7 +298,7 @@ export class BattleController {
         cls = st.cls;
         badge = st.badge;
         type = g.type;
-        if (g.state === 'field') p = sp.cd ? Math.max(0, Math.min(1, 1 - g.squad.specT / sp.cd)) : 1;
+        if (g.state === 'field') p = sp.cd ? Math.max(0, Math.min(1, 1 - g.squad.specT / g.squad.specCd)) : 1;
         if (this.sel?.kind === 'gen' && this.sel.key === g.key) cls += ' sel';
       } else {
         type = c.dataset.t;

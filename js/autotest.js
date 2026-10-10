@@ -7,10 +7,11 @@ import { STORIES } from './stories.js';
 import { TROOP_KEYS, LORD_KEYS, EQUIPS, FACTIONS, STAGE_COUNT, BOSS_SKILLS, TROOP_UNLOCK, GENERALS } from './data.js';
 import { PLACES, stageLayout, pathAt } from './maps.js';
 import { buildWaves } from './waves.js';
-import { battleSetup } from './army.js';
+import { battleSetup, troopStats, skillList, lordLeadership } from './army.js';
+import { TALENT_KEYS, TALENTS, addBlock, addTalent, canRemove, removeTalent, freePoints, autoTalents, talentText } from './talents.js';
 import { Sim } from './sim.js';
 import { autoplay, expectedSave, recommendRoster, recommendGenerals, Bot } from './bot.js';
-import { defaultSave } from './save.js';
+import { defaultSave, sanitize } from './save.js';
 import { applyResult } from './progression.js';
 import { unlockAudio, audioCtx, sfx, testSilentLoop } from './audio.js';
 import { playMusic, playJingle, stopMusic, MUSIC_TRACKS, musicNow } from './music.js';
@@ -136,6 +137,32 @@ function botBattles() {
     if (!sq || !engaged) fail(`boss engage: squad ${!!sq} engaged ${engaged} state ${boss.state}`);
     out.checks.push({ bossEngage: engaged });
   }
+  // talents: rows open with points above, skills need the lord level, points come back out
+  {
+    const s = expectedSave('liubei', 12, 1, { talents: 'none' });
+    if (freePoints(s) !== 11) fail(`talent points: ${freePoints(s)}`);
+    if (addBlock(s, 'lordAtk') !== 'row') fail('talent row not shut');
+    const arch0 = troopStats(s, 'archer').atk, lead0 = lordLeadership(s);
+    for (let i = 0; i < 3; i++) addTalent(s, 'sk1');
+    if (skillList(s)[0].lv !== 4) fail(`skill level from talents: ${skillList(s)[0].lv}`);
+    if (!addTalent(s, 'lordAtk')) fail('talent row did not open');
+    if (canRemove(s, 'sk1')) fail('talent removal would shut a row');
+    removeTalent(s, 'lordAtk');
+    if (!removeTalent(s, 'sk1')) fail('talent removal');
+    addTalent(s, 'rangedAtk');
+    if (!(troopStats(s, 'archer').atk > arch0)) fail('troop talent has no effect');
+    const low = expectedSave('liubei', 2, 1, { talents: 'none' });
+    if (addBlock(low, 'sk2') !== 'skill') fail('skill talent before the skill is learned');
+    autoTalents(s);
+    if (freePoints(s) !== 0) fail(`auto talents left ${freePoints(s)}`);
+    for (const k of TALENT_KEYS) if (!talentText('caocao', k, TALENTS[k].max)) fail(`talent text ${k}`);
+    // an old save (skill levels, no talents) gets its points placed once
+    const old = sanitize({ ...defaultSave('sunquan'), level: 8, sp: 1, skills: [4, 3, 1], talents: undefined });
+    if (freePoints(old) !== 0 || !old.talentNew || old.skills || 'sp' in old) fail(`old save talents: ${JSON.stringify(old.talents)}`);
+    const bad = sanitize({ ...defaultSave('sunquan'), level: 3, talents: { sk1: 4, lordAtk: 3 } });
+    if (freePoints(bad) !== 2) fail(`overspent talents kept: ${JSON.stringify(bad.talents)}`);
+    out.checks.push({ talents: { arch: [Math.round(arch0), Math.round(troopStats(s, 'archer').atk)], lead: [lead0, lordLeadership(s)], old: old.talents } });
+  }
   // rewards on a first clear
   const s = defaultSave('liubei');
   const res = applyResult(s, STORIES.liubei, { stageIdx: 0, won: true, stars: 3, gate: 20, kills: 10, itemsUsed: { potion: 1 } });
@@ -177,6 +204,19 @@ async function uiFlow(game) {
   for (const go of ['barracks', 'lord', 'equip', 'counters']) {
     tap(q(`.tile[data-go="${go}"]`));
     await waitFor(() => game.screenName === go);
+    if (go === 'lord') {
+      // spend a talent point by tapping, then take it back
+      const lv = game.save.level;
+      game.save.level = 3;
+      game.show('lord', {});
+      tap(q('.tl-node[data-k="lordHp"]'));
+      tap(q('.tl-plus'));
+      if (game.save.talents.lordHp !== 1) fail(`talent tap: ${JSON.stringify(game.save.talents)}`);
+      tap(q('.tl-minus'));
+      if (game.save.talents.lordHp) fail('talent untap');
+      game.save.level = lv;
+      game.show('lord', {});
+    }
     tap(q('.back-btn'));
     await waitFor(() => game.screenName === 'base');
     step(go);

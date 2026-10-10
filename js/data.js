@@ -1,7 +1,7 @@
 // Game rules and numbers: troop types and counters, lords and skills, equipment,
 // consumable items and growth formulas. Balance knobs live here.
 
-export const VERSION = '1.0.5'; // keep in sync with CACHE in sw.js
+export const VERSION = '1.0.6'; // keep in sync with CACHE in sw.js
 export const STAGE_COUNT = 20;
 export const GATE_HP = 20;
 export const MAX_LORD_LEVEL = 30;
@@ -402,14 +402,12 @@ export const NO_REWARD_GAP = 2; // lord level ≥ recommended + this → replays
 export const DIFFS = [
   { key: 'easy', name: '쉬움', icon: '🌱', hp: 1.45, atk: 1.3, gold: 0.85, desc: '적이 약해요. 처음 하는 사람에게 추천' },
   { key: 'normal', name: '보통', icon: '⚔️', hp: 2.94, atk: 2.13, gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
-  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.75, atk: 2.6, late: 0.85, gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
-  { key: 'hell', name: '지옥', icon: '💀', hp: 4.56, atk: 3.07, gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
+  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.45, atk: 2.39, gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
+  { key: 'hell', name: '지옥', icon: '💀', hp: 4.06, atk: 2.73, gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
 ];
 export const diffOf = save => DIFFS[save?.diff ?? 1] || DIFFS[1];
 // Harder difficulties bite less in the first stages (a new 지옥 game still starts at Lv 1).
 export const diffScale = (m, n) => 1 + (m - 1) * (n === 1 ? 0.5 : n === 2 ? 0.65 : 0.8 + 0.2 * (n - 1) / 19);
-// Some difficulties ease off in the last stages: enemy hp and attack × late from stage 16 (half at 15).
-export const lateEase = (D, n) => D.late ? 1 - (1 - D.late) * Math.min(1, Math.max(0, (n - 14) / 2)) : 1;
 
 export const BOSS = { hp: 14, atk: 2.4, speed: 0.85, gate: 5, skillCd: 8 };
 export const BOSS_SKILLS = {

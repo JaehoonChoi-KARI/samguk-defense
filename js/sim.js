@@ -4,7 +4,7 @@
 
 import {
   TROOPS, FOES, STAR_MULT, STAR_RANGE, STAR_COST, RETREAT_REFUND, GATE_HP, counterMult, counterLevel, BOSS,
-  SKILLS, ITEMS, stageHpMult, stageAtkMult, killFood, PASSIVE_FOOD, TROOP_KEYS, diffScale, lateEase,
+  SKILLS, ITEMS, stageHpMult, stageAtkMult, killFood, PASSIVE_FOOD, TROOP_KEYS, diffScale,
   GENERALS, GEN_SPECIALS, GENERAL_RECOVER, GENERAL_MOVE_WAIT, PLACE_GAP, ROAD_CLEAR,
 } from './data.js';
 import { pathAt, nearestOnPaths, WORLD_W, WORLD_H } from './maps.js';
@@ -13,7 +13,7 @@ import { rng } from './waves.js';
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const REGEN_DELAY = 4; // seconds without being hit before resting
 const REGEN_RATE = 0.02; // of max HP per second
-const NEXT_WAVE_WAIT = 18;
+const NEXT_WAVE_WAIT = 30; // seconds between one wave fully marching in and the next
 const EARLY_BONUS = 2; // 군량 per second skipped
 const LORD_REVIVE = 12;
 const MAX_RAIDERS = 2;
@@ -28,9 +28,8 @@ export class Sim {
     this.waves = setup.waves;
     this.r = rng(`${setup.seed || 'battle'}:${setup.stage.id}`);
     const D = setup.diff || { hp: 1, atk: 1 };
-    const ease = lateEase(D, this.n);
-    this.hpMult = stageHpMult(this.n) * diffScale(D.hp, this.n) * ease;
-    this.atkMult = stageAtkMult(this.n) * diffScale(D.atk, this.n) * ease;
+    this.hpMult = stageHpMult(this.n) * diffScale(D.hp, this.n);
+    this.atkMult = stageAtkMult(this.n) * diffScale(D.atk, this.n);
     this.mods = setup.mods;
 
     this.state = 'ready'; // ready → play → won | lost
@@ -185,8 +184,9 @@ export class Sim {
     const s = this.newSquad({
       type: g.type, general: g.key, gen: g, spent: 0,
       hp: g.hpLeft ?? g.hp, maxHp: g.hp, atk: g.atk, cd: g.cd, range: g.range, block: g.block, dr: g.dr,
-      specT: (GEN_SPECIALS[g.kind].cd || 0) * 0.4,
+      specCd: (GEN_SPECIALS[g.kind].cd || 0) * (1 - (this.mods.genSpec || 0)),
     }, x, y);
+    s.specT = s.specCd * 0.4;
     this.squads.push(s);
     g.state = 'field';
     g.squad = s;
@@ -794,7 +794,7 @@ export class Sim {
       default:
         break;
     }
-    s.specT = used ? sp.cd : 0.5;
+    s.specT = used ? s.specCd : 0.5;
     if (used) this.emit({ k: 'genSkill', x: pos.x, y: pos.y, name: GENERALS[g.key].skill });
   }
 
@@ -1117,7 +1117,7 @@ export class Sim {
   hitFoe(f, dmg, att, src = null) {
     if (f.hp <= 0) return 0;
     const lv = counterLevel(att, f.type);
-    const m = counterMult(att, f.type);
+    const m = counterMult(att, f.type) * (lv > 0 ? 1 + (this.mods.counter || 0) : 1);
     const v = dmg * m;
     f.hp -= v;
     if (lv && f.cmT <= 0) {
@@ -1184,12 +1184,12 @@ export class Sim {
       a.dead = true;
       a.hp = 0;
       a.engage = null;
-      a.reviveT = LORD_REVIVE;
+      a.reviveT = this.mods.lordRevive ? LORD_REVIVE / 2 : LORD_REVIVE;
       this.emit({ k: 'lordDown', x: a.x, y: a.y });
     } else if (a.kind === 'squad' && a.gen) {
       const g = a.gen;
       g.state = 'hand';
-      g.waitT = GENERAL_RECOVER;
+      g.waitT = GENERAL_RECOVER - (this.mods.genRecover || 0);
       g.hpLeft = null;
       g.squad = null;
       this.stats.genDown = (this.stats.genDown || 0) + 1;

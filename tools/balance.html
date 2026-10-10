@@ -12,12 +12,14 @@
 //   &troop=0 (extra troop levels)  &early=0 (call waves early)  &dump=1 (list enemies when a battle stalls)
 //   &hp=1 &atk=1 (multiply enemy hp / atk to try values)  &items=0 (bot uses no consumable items)
 //   &bosshp=1 (multiply enemy general hp)  &scd=1 (multiply lord skill cooldowns)  &gens=0 (no generals)
+//   &talents=plan|troop|none (how the lord's talent points are spent)
 import { STORIES } from '../js/stories.js';
-import { buildWaves } from '../js/waves.js';
+import { buildWaves, WAVE_TUNE } from '../js/waves.js';
 import { stageLayout } from '../js/maps.js';
 import { battleSetup } from '../js/army.js';
 import { Sim } from '../js/sim.js';
 import { autoplay, expectedSave, recommendRoster, recommendGenerals } from '../js/bot.js';
+import { TALENT_PLAN } from '../js/talents.js';
 
 const P = new URLSearchParams(location.search);
 const lords = (P.get('lords') || 'liubei,caocao,sunquan').split(',');
@@ -28,6 +30,12 @@ const lvl = +(P.get('lvl') || 0);
 const troop = +(P.get('troop') || 0);
 const early = P.get('early') === '1';
 const useItems = P.get('items') !== '0';
+if (P.has('wsize')) WAVE_TUNE.size = +P.get('wsize'); // later stages: wave size and tightness exponents
+if (P.has('wtight')) WAVE_TUNE.tight = +P.get('wtight');
+// troop-first talents: the troop tree up to its last row, then the suggested plan
+const TROOP_PLAN = ['meleeHp', 'rangedAtk', 'meleeHp', 'rangedAtk', 'meleeHp', 'rangedAtk', 'eliteFoot', 'eliteBow', 'eliteFoot', 'eliteBow',
+  'eliteFoot', 'eliteBow', 'eliteHorse', 'eliteSiege', 'eliteHorse', 'eliteSiege', 'counter', 'eliteHorse', 'eliteSiege', ...TALENT_PLAN];
+const talents = { troop: TROOP_PLAN, none: 'none' }[P.get('talents')] || 'plan';
 const hpK = +(P.get('hp') || 1), atkK = +(P.get('atk') || 1);
 const rows = [];
 for (const lord of lords) {
@@ -35,7 +43,7 @@ for (const lord of lords) {
     const stage = STORIES[lord].stages[n - 1];
     let won = 0, gate = 0, time = 0, lost = 0, leaked = 0, bossLoss = 0, stalls = [];
     for (let r = 0; r < runs; r++) {
-      const s = expectedSave(lord, n, diff, { levelBonus: lvl, troopBonus: troop });
+      const s = expectedSave(lord, n, diff, { levelBonus: lvl, troopBonus: troop, talents });
       const ws = buildWaves(stage, n, stageLayout(n).paths.length);
       s.roster = recommendRoster(s, ws);
       s.picks = P.get('gens') === '0' ? [] : recommendGenerals(s, ws);
@@ -56,7 +64,8 @@ for (const lord of lords) {
       }
       if (sim.state === 'play') stalls.unshift('STALLED');
     }
-    rows.push({ lord, n, title: stage.title, win: won / runs, gate: +(gate / runs).toFixed(1), time: Math.round(time / runs), lost: +(lost / runs).toFixed(1), leaked: +(leaked / runs).toFixed(1), boss: bossLoss, ...(stalls.length ? { stalls } : {}) });
+    const wv = buildWaves(stage, n, stageLayout(n).paths.length);
+    rows.push({ lord, n, title: stage.title, win: won / runs, gate: +(gate / runs).toFixed(1), time: Math.round(time / runs), lost: +(lost / runs).toFixed(1), leaked: +(leaked / runs).toFixed(1), boss: bossLoss, waves: wv.length, march: Math.round(wv.reduce((s, w) => s + w.length, 0)), ...(stalls.length ? { stalls } : {}) });
   }
 }
 document.getElementById('out').textContent = JSON.stringify(rows);

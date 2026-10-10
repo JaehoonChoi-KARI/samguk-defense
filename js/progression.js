@@ -15,12 +15,9 @@ export function addExp(save, exp) {
   save.exp += exp;
   while (save.level < MAX_LORD_LEVEL && save.exp >= expNeed(save.level)) {
     save.exp -= expNeed(save.level);
-    save.level++;
-    save.sp++;
+    save.level++; // one more talent point comes with every level
     out.levels++;
-    SKILL_UNLOCK.forEach((lv, i) => {
-      if (save.level >= lv && !save.skills[i]) { save.skills[i] = 1; out.newSkills.push(i); }
-    });
+    SKILL_UNLOCK.forEach((lv, i) => { if (save.level === lv) out.newSkills.push(i); });
   }
   if (save.level >= MAX_LORD_LEVEL) save.exp = 0;
   return out;

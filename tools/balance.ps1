@@ -21,8 +21,8 @@ if ($Detail) {
 }
 $bands = foreach ($b in @(@(1,5),@(6,10),@(11,15),@(16,20))) {
   $x = $rows | Where-Object { $_.n -ge $b[0] -and $_.n -le $b[1] }
-  if ($x) { "{0}-{1}: win {2:N2} gate {3:N1}" -f $b[0], $b[1], ($x | Measure-Object win -Average).Average, ($x | Measure-Object gate -Average).Average }
+  if ($x) { "{0}-{1}: win {2:N2} gate {3:N1} t {4:N0}s (march {5:N0}s, {6:N1} waves)" -f $b[0], $b[1], ($x | Measure-Object win -Average).Average, ($x | Measure-Object gate -Average).Average, ($x | Measure-Object time -Average).Average, ($x | Measure-Object march -Average).Average, ($x | Measure-Object waves -Average).Average }
 }
 "[$Name] $Query"
-"  ALL: win {0:N2} gate {1:N1} | {2}" -f ($rows | Measure-Object win -Average).Average, ($rows | Measure-Object gate -Average).Average, ($bands -join ' | ')
+"  ALL: win {0:N2} gate {1:N1} time {3:N0}s | {2}" -f ($rows | Measure-Object win -Average).Average, ($rows | Measure-Object gate -Average).Average, ($bands -join ' | '), ($rows | Measure-Object time -Average).Average
 "  boss losses: {0} | losses: " -f ($rows | Measure-Object boss -Sum).Sum + (($rows | Where-Object { $_.win -lt 1 } | ForEach-Object { "{0}{1}({2:N1}/{3})" -f $_.lord.Substring(0,2), $_.n, $_.win, $_.gate }) -join ' ')

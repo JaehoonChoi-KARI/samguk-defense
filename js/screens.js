@@ -3,7 +3,7 @@
 
 import {
   VERSION, TROOPS, TROOP_KEYS, STRONG, STRONG_WHY, LORDS, LORD_KEYS, SKILLS, SKILL_UNLOCK, EQUIPS, GRADES, SLOTS,
-  ITEMS, ITEM_KEYS, ITEM_CARRY_MAX, FACTIONS, TROOP_UNLOCK, BOSS_SKILLS, MAX_TROOP_LEVEL, MAX_SKILL_LEVEL, MAX_ENHANCE,
+  ITEMS, ITEM_KEYS, ITEM_CARRY_MAX, FACTIONS, TROOP_UNLOCK, BOSS_SKILLS, MAX_TROOP_LEVEL, MAX_ENHANCE,
   STAGE_COUNT, troopUpCost, enhanceCost, equipFx, fxText, expNeed, recLevel, stageGold, fmt, weakTo, pct,
   DIFFS, diffOf, GENERALS, GEN_SPECIALS, GENERAL_PICKS, COUNTER_MARK, COUNTER_NAME, COUNTER_MULT, relations, bestLevel, RING,
   generalsOf,
@@ -11,6 +11,10 @@ import {
 import { PLACES } from './maps.js';
 import { STORIES } from './stories.js';
 import { listSlots, deleteSlot } from './save.js';
+import {
+  TALENT_TREES, TALENT_ROWS, TALENTS, talentLabel, talentText, talentPoints, freePoints, treeSpent, addBlock, canRemove,
+  addTalent, removeTalent, resetTalents, autoTalents, skillLevel,
+} from './talents.js';
 import { lordStats, troopStats, lordLeadership, rosterLead, troopUnlocked, skillList, fitRoster, unlockedGenerals, pickedGenerals, generalStats, generalUnlocked } from './army.js';
 import { buildWaves, stageSummary } from './waves.js';
 import { stageLayout } from './maps.js';
@@ -302,7 +306,7 @@ function baseScreen(game) {
         </button>
         <div class="tiles">
           <button class="tile" data-go="barracks" type="button"><span class="ti">🏯</span><b>병영</b><small>병종 강화</small></button>
-          <button class="tile" data-go="lord" type="button"><span class="ti">👑</span><b>군주</b><small>스킬 ${s.sp ? `<em class="badge">${s.sp}</em>` : ''}</small></button>
+          <button class="tile" data-go="lord" type="button"><span class="ti">👑</span><b>군주</b><small>특성 ${freePoints(s) ? `<em class="badge">${freePoints(s)}</em>` : s.talentNew ? '<em class="badge">NEW</em>' : ''}</small></button>
           <button class="tile" data-go="equip" type="button"><span class="ti">🛡️</span><b>장비</b><small>장착·강화·구매 ${newEq ? `<em class="badge">새 ${newEq}</em>` : ''}</small></button>
           <button class="tile" data-go="counters" type="button"><span class="ti">📖</span><b>상성표</b><small>누가 누구에게 강할까?</small></button>
           <button class="tile" data-go="generals" type="button"><span class="ti">🎖️</span><b>장수</b><small>${unlockedGenerals(s).length}명 합류</small></button>
@@ -691,53 +695,122 @@ function lordScreen(game, arg = {}) {
       ${backBtn()}
       <div class="lord-cols">
         <div class="panel lord-info"></div>
-        <div class="panel lord-skills-panel"></div>
+        <div class="panel lord-talents"></div>
       </div>
     </div>`);
   el.querySelector('.back-btn').addEventListener('click', () => { sfx.select(); goBack(game, arg); });
+  let sel = arg.talent || TALENT_TREES[0].nodes[0].key;
+  let resetArmed = 0;
+  const news = s.talentNew;
+  if (news) { s.talentNew = false; game.persist(); }
+  const BLOCK = {
+    max: '이미 최고예요',
+    points: '특성 포인트가 없어요. 레벨을 올리거나 다른 특성에서 빼 오세요',
+  };
+  const blockText = (k, why) => {
+    const n = TALENTS[k];
+    if (why === 'skill') return `군주 Lv ${SKILL_UNLOCK[n.skill]}에 스킬을 배우면 찍을 수 있어요`;
+    if (why === 'row') {
+      const t = TALENT_TREES.find(x => x.key === n.tree);
+      return `${t.name} 특성에 ${TALENT_ROWS[n.row] - treeSpent(s, n.tree, n.row)}포인트를 더 찍으면 열려요`;
+    }
+    return BLOCK[why] || '';
+  };
   const paint = () => {
     const st = lordStats(s);
+    const list = skillList(s);
     el.querySelector('.lord-info').innerHTML = `
       <img class="big-face" src="${lordIcon(s.lord, 180)}" alt="">
       <h2>${L.name} <small>${L.title}</small></h2>
       <div class="stat-list">
         <div>레벨 <b>${s.level}</b> <small>(경험치 ${fmt(s.exp)} / ${fmt(expNeed(s.level))})</small></div>
-        <div>❤ 체력 <b>${fmt(st.hp)}</b></div>
-        <div>⚔ 공격 <b>${fmt(st.atk)}</b> <small>${L.ranged ? '활' : '칼'}</small></div>
-        <div>🛡 받는 피해 <b>-${pct(st.def)}</b></div>
-        <div>🚩 통솔력 <b>${lordLeadership(s)}</b> <small>레벨마다 +2</small></div>
+        <div>❤ 체력 <b>${fmt(st.hp)}</b> · ⚔ 공격 <b>${fmt(st.atk)}</b> <small>${L.ranged ? '활' : '칼'}</small></div>
+        <div>🛡 받는 피해 <b>-${pct(st.def)}</b> · 🚩 통솔력 <b>${lordLeadership(s)}</b></div>
       </div>
-      <div class="trait">⭐ ${L.trait}</div>`;
-    const list = skillList(s);
-    el.querySelector('.lord-skills-panel').innerHTML = `
-      <h2>✨ 군주 스킬 <span class="sp">스킬 포인트 <b>${s.sp}</b></span></h2>
-      <p class="muted">레벨이 오를 때마다 스킬 포인트를 1개 받아요.</p>
-      ${L.skills.map((key, i) => {
-        const def = SKILLS[key];
-        const lv = s.skills[i] || 0;
-        const locked = !list[i];
-        const max = lv >= MAX_SKILL_LEVEL;
-        return `
-          <div class="sk ${locked ? 'locked' : ''}" data-i="${i}">
-            <span class="sk-ico">${def.icon}</span>
-            <div class="sk-mid">
-              <b>${def.name}</b> ${locked ? `<small>🔒 군주 Lv ${SKILL_UNLOCK[i]}에 배워요</small>` : `<span class="lv">Lv ${lv}</span> <small>대기 ${Math.round(list[i].cd)}초 · ${def.target === 'self' ? '바로 사용' : def.target === 'path' ? '길을 골라 사용' : '위치를 골라 사용'}</small>`}
-              <div class="sk-desc">${def.desc(Math.max(1, lv))}</div>
-              ${!locked && !max ? `<div class="sk-next">다음: ${def.desc(lv + 1)}</div>` : ''}
-            </div>
-            ${locked ? '' : `<button class="btn ${max ? '' : 'primary'} sk-up" type="button" ${max ? 'disabled' : ''}>${max ? '최고' : '⬆ 1포인트'}</button>`}
-          </div>`;
-      }).join('')}`;
-    el.querySelectorAll('.sk-up').forEach(b => b.addEventListener('click', () => {
-      const i = +b.closest('.sk').dataset.i;
-      if (s.sp <= 0) { sfx.denied(); shake(b); toast(el, '스킬 포인트가 없어요. 레벨을 올려 보세요', true); return; }
-      if (s.skills[i] >= MAX_SKILL_LEVEL) return;
-      s.sp--;
-      s.skills[i]++;
+      <div class="trait">⭐ ${L.trait}</div>
+      <div class="lord-sk-list">
+        ${L.skills.map((key, i) => {
+          const def = SKILLS[key];
+          const sk = list[i];
+          return `<div class="lsk ${sk ? '' : 'locked'}"><span class="sk-ico">${def.icon}</span><div><b>${def.name}</b> ${sk ? `<span class="lv">Lv ${sk.lv}</span> <small>대기 ${Math.round(sk.cd)}초</small>` : `<small>🔒 군주 Lv ${SKILL_UNLOCK[i]}에 배워요</small>`}</div></div>`;
+        }).join('')}
+      </div>`;
+    const free = freePoints(s);
+    const n = TALENTS[sel];
+    const r = s.talents[sel] || 0;
+    const lab = talentLabel(s.lord, sel);
+    const why = addBlock(s, sel);
+    el.querySelector('.lord-talents').innerHTML = `
+      <div class="tl-head">
+        <h2>✨ 군주 특성</h2>
+        <span class="sp">남은 포인트 <b>${free}</b> / ${talentPoints(s)}</span>
+        <span class="grow"></span>
+        <button class="btn tl-auto" type="button" ${free ? '' : 'disabled'}>🧭 추천대로 찍기</button>
+        <button class="btn tl-reset ${resetArmed ? 'danger' : ''}" type="button">${resetArmed ? '정말 되돌릴까요?' : '↩ 모두 되돌리기'}</button>
+      </div>
+      ${news ? '<p class="tl-news">🆕 군주 특성이 생겼어요! 예전 스킬 포인트를 추천대로 찍어 두었어요. 마음대로 바꿔 보세요.</p>' : '<p class="muted">레벨이 오를 때마다 특성 포인트 1개. 어디에 쓸지 골라요. 언제든 공짜로 되돌려 다시 찍을 수 있어요.</p>'}
+      <div class="tl-trees">
+        ${TALENT_TREES.map(t => `
+          <div class="tl-tree">
+            <div class="tl-tree-h">${t.icon} ${t.name} <small>${treeSpent(s, t.key)}포인트</small></div>
+            ${TALENT_ROWS.map((need, row) => `
+              <div class="tl-row ${treeSpent(s, t.key, row) < need ? 'shut' : ''}">
+                ${t.nodes.filter(m => m.row === row).map(m => {
+                  const mr = s.talents[m.key] || 0;
+                  const ml = talentLabel(s.lord, m.key);
+                  const b = addBlock(s, m.key);
+                  const cls = [m.key === sel ? 'sel' : '', mr ? 'some' : '', mr >= m.max ? 'full' : '', b === 'row' || b === 'skill' ? 'off' : '', m.row === 3 ? 'cap' : ''].join(' ');
+                  return `<button class="tl-node ${cls}" data-k="${m.key}" type="button"><span class="tl-ico">${ml.icon}</span><span class="tl-name">${ml.name}</span><span class="tl-r">${mr}/${m.max}</span></button>`;
+                }).join('')}
+              </div>`).join('')}
+          </div>`).join('')}
+      </div>
+      <div class="tl-detail">
+        <div class="tl-d-head"><span class="tl-ico">${lab.icon}</span><b>${lab.name}</b><span class="tl-r">${r}/${n.max}</span></div>
+        <div class="tl-d-now">${r ? `지금: ${talentText(s.lord, sel, r)}` : `아직 안 찍었어요${n.skill !== undefined && skillLevel(s, n.skill) ? ` (스킬 Lv 1)` : ''}`}</div>
+        ${r < n.max ? `<div class="tl-d-next">${r ? '다음' : '1포인트'}: ${talentText(s.lord, sel, r + 1)}</div>` : ''}
+        ${why && why !== 'max' ? `<div class="tl-d-why">🔒 ${blockText(sel, why)}</div>` : ''}
+        <div class="tl-d-btns">
+          <button class="btn tl-minus" type="button" ${canRemove(s, sel) ? '' : 'disabled'}>➖ 빼기</button>
+          <button class="btn primary tl-plus" type="button" ${why ? 'disabled' : ''}>${r >= n.max ? '최고' : '➕ 1포인트'}</button>
+        </div>
+      </div>`;
+    el.querySelectorAll('.tl-node').forEach(b => b.addEventListener('click', () => { sfx.select(); sel = b.dataset.k; resetArmed = 0; paint(); }));
+    el.querySelector('.tl-plus').addEventListener('click', e => {
+      const w = addBlock(s, sel);
+      if (w) { sfx.denied(); shake(e.currentTarget); toast(el, blockText(sel, w), true); return; }
+      addTalent(s, sel);
       sfx.upgrade();
       game.persist();
       paint();
-    }));
+    });
+    el.querySelector('.tl-minus').addEventListener('click', e => {
+      if (!removeTalent(s, sel)) { sfx.denied(); shake(e.currentTarget); toast(el, '아래 줄에 찍은 포인트가 있어서 뺄 수 없어요', true); return; }
+      sfx.select();
+      game.persist();
+      paint();
+    });
+    el.querySelector('.tl-auto').addEventListener('click', () => {
+      autoTalents(s);
+      sfx.upgrade();
+      game.persist();
+      paint();
+    });
+    el.querySelector('.tl-reset').addEventListener('click', () => {
+      if (!resetArmed) {
+        sfx.select();
+        resetArmed = setTimeout(() => { resetArmed = 0; if (el.isConnected) paint(); }, 3000);
+        paint();
+        return;
+      }
+      clearTimeout(resetArmed);
+      resetArmed = 0;
+      resetTalents(s);
+      sfx.select();
+      toast(el, `특성 포인트 ${talentPoints(s)}개를 모두 돌려받았어요`);
+      game.persist();
+      paint();
+    });
   };
   paint();
   return { el, music: 'base' };
@@ -886,7 +959,7 @@ function resultScreen(game, { r, out }) {
   if (out.sleep) lines.push('<div class="rw sleep">💤 레벨이 높아서 이번에는 보상이 없어요</div>');
   if (out.gold) lines.push(`<div class="rw">💰 골드 +${fmt(out.gold)}${out.starGold ? ` <small>(별 보너스 ${fmt(out.starGold)} 포함)</small>` : ''}</div>`);
   if (out.exp) lines.push(`<div class="rw">✨ 경험치 +${fmt(out.exp)}</div>`);
-  if (out.levels) lines.push(`<div class="rw big">🎉 레벨 업! Lv ${s.level} <small>통솔력 ${lordLeadership(s)} · 스킬 포인트 +${out.levels}</small></div>`);
+  if (out.levels) lines.push(`<div class="rw big">🎉 레벨 업! Lv ${s.level} <small>통솔력 ${lordLeadership(s)} · 특성 포인트 +${out.levels}</small></div>`);
   for (const i of out.newSkills) {
     const key = LORDS[s.lord].skills[i];
     lines.push(`<div class="rw big">✨ 새 스킬: ${SKILLS[key].icon} ${SKILLS[key].name}</div>`);

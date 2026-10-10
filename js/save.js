@@ -1,7 +1,8 @@
 // Save data lives in this device's localStorage: three fixed save slots plus
 // device-wide preferences (sound, last used slot).
 
-import { TROOP_KEYS, ITEM_KEYS, STAGE_COUNT, LORDS, EQUIPS, MAX_ENHANCE, MAX_TROOP_LEVEL, MAX_SKILL_LEVEL, MAX_LORD_LEVEL, GENERALS, GENERAL_PICKS, generalsOf } from './data.js';
+import { TROOP_KEYS, ITEM_KEYS, STAGE_COUNT, LORDS, EQUIPS, MAX_ENHANCE, MAX_TROOP_LEVEL, MAX_LORD_LEVEL, GENERALS, GENERAL_PICKS, generalsOf } from './data.js';
+import { autoTalents, cleanTalents } from './talents.js';
 
 export const SLOT_COUNT = 3;
 export const SAVE_VERSION = 1;
@@ -20,8 +21,8 @@ export function defaultSave(lord = null) {
     level: 1,
     exp: 0,
     gold: 150,
-    sp: 0, // unspent skill points
-    skills: [1, 0, 0],
+    talents: {}, // talent key → points (one point per lord level after the first)
+    talentNew: false, // talents arrived in an update: points were placed for the player once
     troops: Object.fromEntries(TROOP_KEYS.map(t => [t, 1])),
     equips: [{ key: 'w_iron', up: 0 }, { key: 'a_leather', up: 0 }],
     equipped: { weapon: 'w_iron', armor: 'a_leather', treasure: null },
@@ -51,9 +52,17 @@ export function sanitize(raw) {
   s.level = int(s.level, 1, MAX_LORD_LEVEL, 1);
   s.exp = int(s.exp, 0, 1e9, 0);
   s.gold = int(s.gold, 0, 1e9, 0);
-  s.sp = int(s.sp, 0, 999, 0);
-  s.skills = [0, 1, 2].map(i => int(Array.isArray(raw.skills) ? raw.skills[i] : 0, 0, MAX_SKILL_LEVEL, i === 0 ? 1 : 0));
-  if (!s.skills[0]) s.skills[0] = 1;
+  delete s.sp; // skill points and levels before talents (v1.0.5 and older)
+  delete s.skills;
+  if (raw.talents && typeof raw.talents === 'object') {
+    cleanTalents(s);
+    s.talentNew = !!raw.talentNew;
+  } else {
+    // an older save: place its points along the suggested plan once, the player can redo them
+    s.talents = {};
+    autoTalents(s);
+    s.talentNew = s.level > 1;
+  }
   s.troops = Object.fromEntries(TROOP_KEYS.map(t => [t, int(raw.troops?.[t], 1, MAX_TROOP_LEVEL, 1)]));
   const seenKeys = new Set();
   s.equips = (Array.isArray(raw.equips) ? raw.equips : d.equips)
