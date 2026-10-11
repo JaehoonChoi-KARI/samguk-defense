@@ -1,7 +1,7 @@
 // Game rules and numbers: troop types and counters, lords and their orders, equipment,
 // consumable items and growth formulas. Balance knobs live here.
 
-export const VERSION = '1.0.13'; // keep in sync with CACHE in sw.js
+export const VERSION = '1.0.14'; // keep in sync with CACHE in sw.js
 export const STAGE_COUNT = 20;
 export const GATE_HP = 60;
 export const MAX_LORD_LEVEL = 30;
@@ -445,15 +445,19 @@ export const NO_REWARD_GAP = 2; // lord level ≥ recommended + this → replays
 // is lost now and then by a player who puts units anywhere. crowd* bring more soldiers per wave
 // (a defence game gets harder with numbers): crowdBase before stage crowdFrom, then rising to
 // crowd at stage 20; or crowdBands, one multiplier for each five stages; or crowdPts,
-// [[stage, multiplier], ...] joined by straight lines.
+// [[stage, multiplier], ...] joined by straight lines. crowdScale then multiplies that for each
+// five stages (보통·어려움·지옥 made 10%p harder everywhere, 14차).
 export const DIFFS = [
   { key: 'easy', name: '쉬움', icon: '🌱', hp: 1.33, atk: 1.2, shp: 1.85, satk: 1.55, gold: 0.85, desc: '적이 약해요. 처음 하는 사람에게 추천' },
-  { key: 'normal', name: '보통', icon: '⚔️', hp: 2.63, atk: 1.79, gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
-  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.4, atk: 2.21, crowdPts: [[1, 1], [5, 1.2], [15, 1.2], [20, 1.42]], gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
-  { key: 'hell', name: '지옥', icon: '💀', hp: 4.11, atk: 2.58, crowdBands: [2.8, 1.7, 1.6, 1.13], gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
+  { key: 'normal', name: '보통', icon: '⚔️', hp: 2.63, atk: 1.79, crowdScale: [1.6, 1.7, 1.7, 1.38], gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
+  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.4, atk: 2.21, crowdPts: [[1, 1], [5, 1.2], [15, 1.2], [20, 1.42]], crowdScale: [2.1, 1.4, 1.4, 1.05], gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
+  { key: 'hell', name: '지옥', icon: '💀', hp: 4.11, atk: 2.58, crowdBands: [2.8, 1.7, 1.6, 1.13], crowdScale: [1.3, 1.13, 1.04, 1.05], gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
 ];
 export const diffOf = save => DIFFS[save?.diff ?? 1] || DIFFS[1];
 export function crowdMult(D, n) {
+  return crowdRaw(D, n) * (D?.crowdScale ? D.crowdScale[Math.min(3, Math.floor((n - 1) / 5))] : 1);
+}
+function crowdRaw(D, n) {
   if (D?.crowdPts) {
     const p = D.crowdPts;
     if (n <= p[0][0]) return p[0][1];

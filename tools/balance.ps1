@@ -15,7 +15,7 @@ if (-not $m.Success) { "NO OUTPUT"; return }
 $rows = [System.Net.WebUtility]::HtmlDecode($m.Groups[1].Value) | ConvertFrom-Json
 if ($Detail) {
   foreach ($r in $rows) {
-    "{0,-8} {1,2} {2,-12} win {3,4} gate {4,4} t {5,4}s lost {6,4} leak {7,4} bossLoss {8}" -f $r.lord, $r.n, $r.title, $r.win, $r.gate, $r.time, $r.lost, $r.leaked, $r.boss
+    "{0,-8} {1,2} {2,-12} win {3,4} gate {4,4} t {5,4}s lost {6,4} leak {7,4} bossLoss {8} peak {9}" -f $r.lord, $r.n, $r.title, $r.win, $r.gate, $r.time, $r.lost, $r.leaked, $r.boss, $r.peak
     if ($r.stalls) { $r.stalls | Select-Object -First 12 | ForEach-Object { "    $_" } }
   }
 }
