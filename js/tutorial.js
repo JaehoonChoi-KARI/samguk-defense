@@ -52,7 +52,7 @@ export const TUT_STEPS = [
     done: c => plainSquads(c).some(q => !TROOPS[q.type].melee),
   },
   {
-    key: 'general', title: '⭐ 장수는 공짜!',
+    key: 'general', title: '⭐ 장수 출진!',
     text: c => { const g = c.sim.generals[0]; const G = GENERALS[g.key]; return `위쪽 장수 카드를 눌러 놓아 보세요. 장수는 <b>군량 없이</b> 놓고 아주 강해요.<br><b>${G.name}</b>의 특별한 기술: ✨ ${G.skill} (${GEN_SPECIALS[g.kind].text}).<br>쓰러져도 잠시 뒤 다시 놓을 수 있어요.`; },
     focus: '.inv-gen .icard',
     mark: c => { const g = c.sim.generals[0]; return spot(c, g.type, g.range); },

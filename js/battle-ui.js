@@ -102,17 +102,24 @@ export class BattleController {
           <div class="challenge-line">${this.setup.challenge.icon} 도전: ${this.setup.challenge.text}</div>
           <div class="boss-bar hidden"><span class="boss-name"></span><div class="bar"><i></i></div></div>
         </div>
-        <div class="tb-right">
-          <button class="hbtn speed" type="button">▶ ${this.speed}배</button>
-          <button class="hbtn pause" type="button">⏸</button>
+        <div class="wave-panel hidden">
+          <div class="wp-info">
+            <div class="wp-title"></div>
+            <div class="wp-icons"></div>
+          </div>
+          <button class="wp-call" type="button"></button>
         </div>
-        ${sim.generals.length ? `<div class="inv-gen">${sim.generals.map(g => `
+        <div class="tb-right">
+          ${sim.generals.length ? `<div class="inv-gen">${sim.generals.map(g => `
             <div class="icard gen" data-g="${g.key}">
               <img src="${generalIcon(g.type, GENERALS[g.key].letter, this.us, 56)}" alt="">
               <div class="ic-mid"><b>${GENERALS[g.key].name}<em class="up"></em></b><small>✨ ${GENERALS[g.key].skill}</small></div>
               <i class="ic-badge"></i>
               <button class="ic-info" type="button">i</button>
             </div>`).join('')}</div>` : ''}
+          <button class="hbtn speed" type="button">▶ ${this.speed}배</button>
+          <button class="hbtn pause" type="button">⏸</button>
+        </div>
         <div class="inv">
           ${types.map(t => `
             <div class="icard" data-t="${t}">
@@ -123,11 +130,6 @@ export class BattleController {
           ${!types.length && !sim.generals.length ? '<div class="inv-empty">데려온 부대가 없어요</div>' : ''}
         </div>
         <div class="gen-info hidden"></div>
-        <div class="wave-panel hidden">
-          <div class="wp-title"></div>
-          <div class="wp-icons"></div>
-          <button class="wp-call" type="button"></button>
-        </div>
         <div class="items">
           ${ITEM_KEYS.map(k => `
             <button class="ibtn" data-k="${k}" type="button">
@@ -202,11 +204,12 @@ export class BattleController {
     const panel = this.$('.wave-panel');
     const showPanel = sim.state === 'ready' || (sim.state === 'play' && sim.nextT !== null);
     panel.classList.toggle('hidden', !showPanel);
+    this.el.classList.toggle('wp-open', showPanel); // the panel covers the stage name meanwhile
     if (showPanel) {
       const next = sim.nextWave();
       const idx = sim.waveIdx + 1;
       const title = sim.state === 'ready'
-        ? '첫 웨이브 · 준비가 되면 출격!'
+        ? `첫 웨이브 1/${sim.totalWaves}`
         : `다음 웨이브 ${idx + 1}/${sim.totalWaves} · ${Math.ceil(sim.nextT)}초`;
       this.set('wpTitle', '.wp-title', title);
       const key = `${idx}`;
@@ -216,8 +219,7 @@ export class BattleController {
         const them = FACTIONS[this.stage.enemy] || FACTIONS.yellow;
         this.$('.wp-icons').innerHTML = TROOP_KEYS.filter(t => sum[t]).map(t => `
           <span class="wpi"><img src="${troopIcon(t, them, 56)}" alt=""><b>${TROOPS[t].short}</b><i>×${sum[t]}</i></span>`).join('')
-          + (next.boss ? `<span class="wpi boss"><b>적장</b><i>${this.stage.boss.name}</i></span>` : '')
-          + (this.sim.paths.length > 1 ? `<span class="wpi paths">길 ${this.sim.paths.length}개</span>` : '');
+          + (next.boss ? `<span class="wpi boss"><b>적장</b><i>${this.stage.boss.name}</i></span>` : '');
       }
       const call = sim.state === 'ready' ? '⚔ 전투 시작!' : `⚔ 바로 출격 +${Math.ceil(sim.nextT * 2)}🌾`;
       this.set('wpCall', '.wp-call', call);
@@ -280,7 +282,7 @@ export class BattleController {
   genStatus(g) {
     if (g.state === 'field') return { cls: 'field', badge: '⚔', text: '전장에서 싸우는 중' };
     if (g.waitT > 0) return { cls: 'wait', badge: `${Math.ceil(g.waitT)}`, text: `${Math.ceil(g.waitT)}초 뒤에 다시 놓을 수 있어요` };
-    return { cls: 'ready', badge: '무료', text: '놓을 수 있어요 (무료)' };
+    return { cls: 'ready', badge: '출진', text: '지금 출진할 수 있어요 (군량 없이 놓아요)' };
   }
 
   updateInventory() {

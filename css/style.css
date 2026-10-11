@@ -587,25 +587,28 @@ em.up { color: #e07b00; font-style: normal; }
 .boss-bar { width: 340px; background: rgba(20,12,6,0.8); border: 2px solid #ff5a4a; border-radius: 12px; padding: 4px 10px 6px; }
 .boss-name { font-size: 15px; color: #ffd0c0; }
 .boss-bar .bar i { display: block; height: 100%; background: linear-gradient(90deg, #ff3a2a, #ff8a5a); }
-.tb-right { position: absolute; top: var(--safe-t); right: var(--safe-r); display: flex; gap: 6px; }
+.tb-right { position: absolute; top: var(--safe-t); right: var(--safe-r); display: flex; gap: 6px; align-items: flex-start; }
 .hbtn { border: 2px solid rgba(242,193,78,0.6); border-radius: 12px; background: rgba(20,12,6,0.72); color: #fff; font-size: 19px; font-weight: 900; min-width: 54px; min-height: 48px; padding: 4px 12px; }
 .hbtn.on { background: var(--red); }
 
+/* between waves the next-wave panel sits in the top middle, over the stage name and challenge */
 .wave-panel {
-  position: absolute; top: calc(var(--safe-t) + 84px); left: 50%; transform: translateX(-50%);
-  background: rgba(20, 12, 6, 0.82); border: 2px solid var(--gold2); border-radius: 14px;
-  padding: 6px 10px 8px; display: flex; flex-direction: column; align-items: center; gap: 4px;
-  max-width: 92vw;
+  position: absolute; top: var(--safe-t); left: 50%; transform: translateX(-50%); z-index: 5;
+  max-width: calc(100vw - 2 * 310px);
+  background: rgba(20, 12, 6, 0.92); border: 2px solid var(--gold2); border-radius: 14px;
+  padding: 4px 6px 6px; display: flex; flex-direction: column; align-items: stretch; gap: 4px;
 }
-.bhud.placing .wave-panel { opacity: 0.25; pointer-events: none; }
-.wp-title { font-size: 15px; color: #fff3d0; }
-.wp-icons { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
-.wpi { display: flex; align-items: center; gap: 2px; background: rgba(255,255,255,0.12); border-radius: 10px; padding: 1px 8px 1px 2px; font-size: 14px; }
-.wpi img { width: 34px; height: 34px; }
+.bhud.placing .wave-panel { opacity: 0.5; }
+.bhud.wp-open .tb-center { visibility: hidden; }
+.wp-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wp-title { font-size: 14px; color: #fff3d0; white-space: nowrap; }
+.wp-icons { display: flex; gap: 3px; flex-wrap: nowrap; }
+.wpi { display: flex; align-items: center; gap: 2px; background: rgba(255,255,255,0.12); border-radius: 8px; padding: 0 6px 0 1px; font-size: 13px; white-space: nowrap; }
+.wpi img { width: 28px; height: 28px; }
 .wpi i { font-style: normal; color: var(--gold); }
-.wpi.boss { background: rgba(255,60,40,0.35); padding: 4px 10px; }
-.wpi.paths { padding: 4px 10px; }
-.wp-call { border: none; border-radius: 12px; background: linear-gradient(180deg, #d8433a, #a3221b); color: #fff; font-size: 18px; font-weight: 900; padding: 8px 20px; min-height: 46px; box-shadow: 0 3px 0 #6b120d; }
+.wpi.boss { background: rgba(255,60,40,0.35); padding: 3px 8px; }
+
+.wp-call { flex: none; border: none; border-radius: 12px; background: linear-gradient(180deg, #d8433a, #a3221b); color: #fff; font-size: 16px; font-weight: 900; padding: 4px 12px; min-height: 42px; box-shadow: 0 3px 0 #6b120d; white-space: nowrap; }
 
 .bhud .items { position: absolute; left: var(--safe-l); bottom: var(--safe-b); display: flex; gap: 8px; }
 .ibtn {
@@ -654,7 +657,7 @@ em.up { color: #e07b00; font-style: normal; }
 .toast.show { animation: toast2 1.6s forwards; }
 @keyframes toast2 { 0% { opacity: 0; } 10%, 80% { opacity: 1; } 100% { opacity: 0; } }
 .tut {
-  position: absolute; top: calc(var(--safe-t) + 58px); left: calc(var(--safe-l) + 8px); z-index: 40;
+  position: absolute; top: calc(var(--safe-t) + 74px); left: calc(var(--safe-l) + 8px); z-index: 40;
   width: 390px; max-width: calc(100vw - 260px); background: rgba(255, 248, 225, 0.97); color: var(--ink); border: 4px solid var(--gold2);
   border-radius: 16px; padding: 10px 14px 12px; font-size: 16px; font-weight: 700; line-height: 1.45;
   box-shadow: 0 8px 24px rgba(0,0,0,0.5); pointer-events: auto; animation: tutIn 0.25s ease-out;
@@ -890,7 +893,7 @@ em.up.very { color: #e04e00; letter-spacing: -2px; }
 .gchip.field .gc-state { background: var(--gold); color: var(--ink); }
 .gchip.wait .gc-state { background: #ff8a7a; color: #3a0f0a; }
 .gen-info {
-  position: absolute; top: calc(var(--safe-t) + 70px); right: calc(var(--safe-r) + 110px); width: 320px; z-index: 6;
+  position: absolute; top: calc(var(--safe-t) + 104px); right: calc(var(--safe-r) + 124px); width: 320px; z-index: 6;
   background: linear-gradient(180deg, var(--paper), var(--paper2)); color: var(--ink);
   border: 3px solid #8c6a3a; border-radius: 16px; padding: 8px 10px 10px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
 }
@@ -934,20 +937,26 @@ em.up.very { color: #e04e00; letter-spacing: -2px; }
   background: var(--ink); color: #fff; font-weight: 900; font-size: 13px; font-style: italic;
 }
 .inv-empty { color: #fff3d0; font-size: 12px; text-align: center; }
-.gen-info { right: 140px; }
 @media (max-height: 600px) {
   .inv { width: 96px; gap: 4px; padding: 4px; }
   .icard img { width: 34px; height: 34px; }
   .ic-mid b { font-size: 12px; }
 }
-/* generals: their own column, just inside the troop list */
+/* generals: their cards side by side in the top row, left of the speed button */
 .inv-gen {
-  position: absolute; top: calc(var(--safe-t) + 58px); right: calc(var(--safe-r) + 120px);
-  width: 104px; display: flex; flex-direction: column; gap: 6px; padding: 6px;
+  display: flex; flex-direction: row; gap: 6px; padding: 5px;
   background: rgba(20, 12, 6, 0.62); border: 2px solid rgba(242, 193, 78, 0.5); border-radius: 14px;
 }
-@media (max-height: 600px) {
-  .inv-gen { right: calc(var(--safe-r) + 102px); width: 92px; gap: 4px; padding: 4px; }
+.inv-gen .icard { width: 92px; touch-action: none; }
+.inv-gen .ic-mid b { white-space: nowrap; }
+/* narrower iPads: a little smaller so the next-wave panel still fits in the middle */
+@media (max-width: 1150px) {
+  .inv-gen { gap: 4px; padding: 3px; }
+  .inv-gen .icard { width: 76px; }
+  .inv-gen .icard img { width: 38px; height: 38px; }
+  .inv-gen .ic-mid b { font-size: 12px; }
+  .inv-gen .ic-mid small { font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 72px; }
+  .wp-call { font-size: 15px; min-height: 40px; }
 }
 .boss-warn { font-size: 12px; font-weight: 900; color: #fff; background: var(--red); border-radius: 8px; padding: 1px 7px; }
 .road-tip { margin-top: 4px; font-size: 13px; font-weight: 800; color: #2f6a9a; }
@@ -956,3 +965,4 @@ em.up.very { color: #e04e00; letter-spacing: -2px; }
 .challenge { background: #fff3c4; border-radius: 10px; padding: 5px 9px; margin-top: 6px; font-size: 14px; font-weight: 800; }
 .challenge.done { background: #dff3d6; }
 .challenge small { font-weight: 700; color: var(--ink2); }
+

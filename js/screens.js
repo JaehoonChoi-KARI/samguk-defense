@@ -609,7 +609,7 @@ function prepScreen(game, { stageIdx }) {
     const story = storyOf(s);
     const avail = unlockedGenerals(s);
     const locked = generalsOf(LORDS[s.lord].faction).filter(k => !generalUnlocked(s, k));
-    $('.gen-count').textContent = `${s.picks.length}/${GENERAL_PICKS}명 · 배치 무료`;
+    $('.gen-count').textContent = `${s.picks.length}/${GENERAL_PICKS}명 · 군량 없이 배치`;
     $('.gen-list').innerHTML = avail.map(k => {
       const G = GENERALS[k];
       const lv = bestLevel(G.type, top);
@@ -794,7 +794,7 @@ function lordScreen(game, arg = {}) {
         <button class="btn tl-auto" type="button" ${free ? '' : 'disabled'}>🧭 추천대로 찍기</button>
         <button class="btn tl-reset ${resetArmed ? 'danger' : ''}" type="button">${resetArmed ? '정말 되돌릴까요?' : '↩ 모두 되돌리기'}</button>
       </div>
-      ${news ? '<p class="tl-news">🆕 군주 특성이 생겼어요! 예전 스킬 포인트를 추천대로 찍어 두었어요. 마음대로 바꿔 보세요.</p>' : '<p class="muted">레벨이 오를 때마다 특성 포인트 1개. 어디에 쓸지 골라요. 언제든 공짜로 되돌려 다시 찍을 수 있어요.</p>'}
+      ${news ? '<p class="tl-news">🆕 군주 특성이 생겼어요! 예전 스킬 포인트를 추천대로 찍어 두었어요. 마음대로 바꿔 보세요.</p>' : '<p class="muted">레벨이 오를 때마다 특성 포인트 1개. 어디에 쓸지 골라요. 언제든 되돌려 다시 찍을 수 있어요(골드가 들지 않아요).</p>'}
       <div class="tl-trees">
         ${TALENT_TREES.map(t => `
           <div class="tl-tree">
@@ -1144,7 +1144,7 @@ function generalsScreen(game, arg = {}) {
     <div class="screen generals">
       ${header(game)}
       ${backBtn()}
-      <h2 class="center-title">🎖️ 장수 <small>정비에서 ${GENERAL_PICKS}명을 골라 데려가요. 전장에서는 무료로 세우는 강한 타워가 돼요. 힘은 군주 레벨을 따라 올라요.</small></h2>
+      <h2 class="center-title">🎖️ 장수 <small>정비에서 ${GENERAL_PICKS}명을 골라 데려가요. 전장에서는 군량 없이 세우는 강한 타워가 돼요. 힘은 군주 레벨을 따라 올라요.</small></h2>
       <div class="gcards wide"></div>
     </div>`);
   el.querySelector('.back-btn').addEventListener('click', () => { sfx.select(); goBack(game, arg); });
