@@ -405,10 +405,20 @@ async function uiFlow(game) {
   tap(q('.mc-go'));
   await waitFor(() => game.screenName === 'prep');
   step('prep');
-  tap(q('.gp'));
-  await waitFor(() => q('.gpick'));
-  tap(q('.gpick .done'));
-  if (game.save.picks.length !== 2) fail('general picks');
+  // generals are picked right in the list: take one out, put it back, a third replaces the first
+  const genRows = () => [...document.querySelectorAll('button.gro')];
+  if (genRows().length < 2 || document.querySelectorAll('.gro.on').length !== 2) fail(`general list: ${genRows().length} rows, ${document.querySelectorAll('.gro.on').length} picked`);
+  const firstOn = q('.gro.on').dataset.k;
+  tap(q(`.gro[data-k="${firstOn}"]`));
+  if (game.save.picks.length !== 1 || game.save.picks.includes(firstOn)) fail('general unpick');
+  tap(q(`.gro[data-k="${firstOn}"]`));
+  if (game.save.picks.length !== 2 || !game.save.picks.includes(firstOn)) fail('general pick');
+  const spare = genRows().find(b => !b.classList.contains('on'));
+  if (spare) {
+    const before = [...game.save.picks];
+    tap(spare);
+    if (game.save.picks.length !== 2 || !game.save.picks.includes(spare.dataset.k) || game.save.picks.includes(before[0])) fail('general replace when full');
+  }
   tap(q('.auto'));
   tap(q('.it[data-k="bomb"] .buy'));
   tap(q('.go'));
@@ -648,7 +658,7 @@ async function shot(game, name, params) {
   else if (name === 'counters') game.show('counters', {});
   else if (name === 'generals') game.show('generals', {});
   else if (name === 'storybook') { s.read = []; game.show('storybook', { chapter: STORIES[lord].stages[n - 2]?.id || 'prologue' }); }
-  else if (name === 'picker') { game.show('prep', { stageIdx: n - 1 }); document.querySelector('.gp').click(); }
+  else if (name === 'picker') game.show('prep', { stageIdx: n - 1 });
   else if (name === 'result') {
     const r = { stageIdx: n - 1, won: true, stars: 3, gate: 57, kills: 120, itemsUsed: {}, wavesReached: 5, totalWaves: 5 };
     s.stages[n - 1] = { stars: 0, clears: 0 };

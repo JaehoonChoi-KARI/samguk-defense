@@ -494,16 +494,18 @@ function prepScreen(game, { stageIdx }) {
           <div class="lead"><span class="lead-txt"></span><div class="bar"><i></i></div></div>
           <div class="roster"></div>
           <div class="hint-line">▲▲ 아주 강함 · ▲ 강함 (이번 적에게)</div>
-        </section>
-        <section class="pc gear-col">
-          <div class="pc-h">⭐ 장수 <small>${GENERAL_PICKS}명 · 배치 무료</small></div>
-          <div class="gen-picks"></div>
           <div class="pc-h">🎒 아이템 <small>종류별 ${ITEM_CARRY_MAX}개까지</small></div>
           <div class="prep-items"></div>
           <div class="pc-h">🛡 장비 <button class="mini to-equip" type="button">바꾸기 ▶</button></div>
           <div class="gear"></div>
-          ${stageIdx === 0 && s.seen.tutorial ? '<button class="btn tut-again" type="button">🎓 튜토리얼로 다시 하기</button>' : ''}
-          <button class="btn primary big go" type="button">⚔ 출진!</button>
+        </section>
+        <section class="pc gen-col">
+          <div class="pc-h">⭐ 장수 <small class="gen-count"></small></div>
+          <div class="gen-list"></div>
+          <div class="gen-foot">
+            ${stageIdx === 0 && s.seen.tutorial ? '<button class="btn tut-again" type="button">🎓 튜토리얼로 다시 하기</button>' : ''}
+            <button class="btn primary big go" type="button">⚔ 출진!</button>
+          </div>
         </section>
       </div>
     </div>`);
@@ -600,18 +602,45 @@ function prepScreen(game, { stageIdx }) {
     }).join('');
   };
 
+  // Every general of the faction in a list: tap to bring one along (up to GENERAL_PICKS; a
+  // new pick when full replaces the earliest one), locked ones say where they join.
   const paintGenerals = () => {
-    const picks = pickedGenerals(s);
-    const box = $('.gen-picks');
+    s.picks = pickedGenerals(s);
+    const story = storyOf(s);
     const avail = unlockedGenerals(s);
-    box.innerHTML = Array.from({ length: GENERAL_PICKS }, (_, i) => {
-      const k = picks[i];
-      if (!k) return `<button class="gp empty" type="button">＋ 장수 고르기<small>${avail.length} 명 중</small></button>`;
+    const locked = generalsOf(LORDS[s.lord].faction).filter(k => !generalUnlocked(s, k));
+    $('.gen-count').textContent = `${s.picks.length}/${GENERAL_PICKS}명 · 배치 무료`;
+    $('.gen-list').innerHTML = avail.map(k => {
       const G = GENERALS[k];
       const lv = bestLevel(G.type, top);
-      return `<button class="gp" type="button"><img src="${generalIcon(G.type, G.letter, us(s), 56)}" alt=""><span class="gp-mid"><b>${G.name}${lv > 0 ? ` <em class="up${lv > 1 ? ' very' : ''}">${COUNTER_MARK[lv]}</em>` : ''}</b><small>${TROOPS[G.type].short} · ${G.skill}</small></span></button>`;
+      const on = s.picks.includes(k);
+      return `
+        <button class="gro ${on ? 'on' : ''}" data-k="${k}" type="button">
+          <img src="${generalIcon(G.type, G.letter, us(s), 48)}" alt="">
+          <span class="gro-mid"><b>${G.name}${lv > 0 ? ` <em class="up${lv > 1 ? ' very' : ''}">${COUNTER_MARK[lv]}</em>` : ''}</b><small>${TROOPS[G.type].short} · ✨ ${G.skill}</small></span>
+          <span class="gro-pick">${on ? '✔ 출진' : '＋'}</span>
+        </button>`;
+    }).join('') + locked.map(k => {
+      const G = GENERALS[k];
+      const st = story.stages[G.unlock - 1];
+      return `
+        <div class="gro locked">
+          <img src="${generalIcon(G.type, G.letter, { color: '#777' }, 48)}" alt="">
+          <span class="gro-mid"><b>${G.name}</b><small>🔒 ${G.unlock}번째 지역${st ? ` '${st.title}'` : ''}을(를) 깨면 합류</small></span>
+        </div>`;
     }).join('');
-    box.querySelectorAll('.gp').forEach(b => b.addEventListener('click', () => { sfx.select(); openGeneralPicker(game, el, top, () => { game.persist(); paintGenerals(); }); }));
+    el.querySelectorAll('button.gro').forEach(b => b.addEventListener('click', () => {
+      const k = b.dataset.k;
+      if (s.picks.includes(k)) s.picks = s.picks.filter(x => x !== k);
+      else if (s.picks.length < GENERAL_PICKS) s.picks = [...s.picks, k];
+      else {
+        toast(el, `${GENERALS[s.picks[0]].name} 대신 ${GENERALS[k].name}을(를) 데려가요`);
+        s.picks = [...s.picks.slice(1), k];
+      }
+      sfx.select();
+      game.persist();
+      paintGenerals();
+    }));
   };
 
   $('.auto').addEventListener('click', () => {
@@ -1109,36 +1138,6 @@ function generalCard(s, k, { foes = [], picked = false, locked = false } = {}) {
 }
 
 // Overlay for choosing which generals come along (toggle, up to GENERAL_PICKS).
-function openGeneralPicker(game, parent, foes, onDone) {
-  const s = game.save;
-  const dlg = h(`
-    <div class="confirm gpick">
-      <div class="panel gpick-panel">
-        <h2>⭐ 데려갈 장수 <small>${GENERAL_PICKS}명까지 · ▲ = 이번 적에게 강함</small></h2>
-        <div class="gcards"></div>
-        <div class="row-btns"><button class="btn primary done" type="button">확인</button></div>
-      </div>
-    </div>`);
-  const paint = () => {
-    const avail = unlockedGenerals(s);
-    const locked = generalsOf(LORDS[s.lord].faction).filter(k => !generalUnlocked(s, k));
-    dlg.querySelector('.gcards').innerHTML =
-      avail.map(k => generalCard(s, k, { foes, picked: s.picks.includes(k) })).join('') +
-      locked.map(k => generalCard(s, k, { locked: true })).join('');
-    dlg.querySelectorAll('button.gcard').forEach(b => b.addEventListener('click', () => {
-      const k = b.dataset.k;
-      if (s.picks.includes(k)) s.picks = s.picks.filter(x => x !== k);
-      else if (s.picks.length < GENERAL_PICKS) s.picks = [...s.picks, k];
-      else s.picks = [...s.picks.slice(1), k]; // full: replace the oldest pick
-      sfx.select();
-      paint();
-    }));
-  };
-  paint();
-  dlg.querySelector('.done').addEventListener('click', () => { sfx.confirm(); dlg.remove(); onDone(); });
-  parent.appendChild(dlg);
-}
-
 function generalsScreen(game, arg = {}) {
   const s = game.save;
   const el = h(`

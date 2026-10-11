@@ -406,6 +406,33 @@ em.up { color: #e07b00; font-style: normal; }
 .gr { background: rgba(255,255,255,0.5); border-radius: 10px; padding: 5px 8px; }
 .gr-l { display: inline-block; width: 40px; color: var(--ink2); font-weight: 800; font-size: 13px; }
 .prep .go { width: 100%; margin-top: 4px; }
+/* the middle column holds the roster, items and gear: a little tighter so all fit */
+.army-col .hint-line { margin: 2px 0 4px; font-size: 12px; }
+.army-col .pc-h { margin: 2px 0 4px; }
+.army-col .roster { gap: 4px; }
+.army-col .ro, .army-col .it { padding: 2px 8px; margin-bottom: 0; }
+.army-col .prep-items { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+.army-col .ro .ticon { width: 40px; height: 40px; }
+.army-col .stepper button { width: 40px; height: 40px; font-size: 22px; }
+.army-col .buy { min-height: 40px; padding: 2px 8px; }
+.army-col .it-ico { font-size: 24px; }
+.army-col .gear { gap: 3px; margin-bottom: 0; font-size: 14px; }
+.army-col .gr { padding: 3px 8px; }
+.gen-col { display: flex; flex-direction: column; overflow: hidden; }
+.gen-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; padding: 2px; }
+.gen-foot { flex: none; padding-top: 8px; }
+.gro {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font: inherit; color: var(--ink);
+  border: 2px solid transparent; border-radius: 12px; background: rgba(255,255,255,0.45); padding: 3px 8px; min-height: 56px;
+}
+.gro img { width: 46px; height: 46px; flex: none; }
+.gro-mid { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.gro-mid b { font-size: 16px; }
+.gro-mid small { font-size: 12px; color: var(--ink2); }
+.gro-pick { flex: none; min-width: 52px; text-align: center; font-weight: 900; font-size: 15px; border-radius: 10px; padding: 6px 4px; background: #e3d0a3; }
+.gro.on { background: linear-gradient(180deg, #fff6d0, #f3dc8a); border-color: var(--gold2); }
+.gro.on .gro-pick { background: var(--gold); color: #3a2400; }
+.gro.locked { opacity: 0.55; }
 
 /* ---- barracks / lord / equip / counters --------------------------------------------- */
 
@@ -711,18 +738,6 @@ em.up.very { color: #e04e00; letter-spacing: -2px; }
 .tbtn.gbtn { background: linear-gradient(180deg, #fff6d0, #f3dc8a); box-shadow: 0 3px 0 #b8902a; }
 .tbtn .tcost.free { color: var(--good); }
 .pop-skill { font-size: 14px; margin: 6px 0; line-height: 1.35; background: rgba(255,255,255,0.55); border-radius: 10px; padding: 5px 8px; }
-.gen-picks { display: flex; flex-direction: column; gap: 5px; margin-bottom: 6px; }
-.gp {
-  display: flex; align-items: center; gap: 8px; border: 2px solid var(--gold2); border-radius: 12px;
-  background: linear-gradient(180deg, #fff6d0, #f3dc8a); padding: 4px 8px; text-align: left; min-height: 60px;
-}
-.gp img { width: 50px; height: 50px; }
-.gp-mid { display: flex; flex-direction: column; }
-.gp-mid b { font-size: 17px; }
-.gp-mid small { font-size: 12px; color: var(--ink2); }
-.gp.empty { justify-content: center; flex-direction: column; border-style: dashed; background: rgba(255,255,255,0.4); font-weight: 900; font-size: 16px; }
-.gpick-panel { width: min(900px, 96vw); max-height: 92vh; }
-.gpick-panel h2 small { font-size: 14px; color: var(--ink2); font-weight: 600; }
 .gcards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .gcards.wide { grid-template-columns: repeat(3, 1fr); padding-bottom: 20px; }
 .gcard {
@@ -752,9 +767,6 @@ em.up.very { color: #e04e00; letter-spacing: -2px; }
 .ct-line.good.very .mk { color: #e04e00; }
 .ct-line.bad.very .mk { color: #8c1a14; }
 @media (max-width: 900px) { .gcards.wide { grid-template-columns: repeat(2, 1fr); } }
-.gpick-panel { display: flex; flex-direction: column; }
-.gpick-panel .gcards { overflow-y: auto; flex: 1; min-height: 0; padding: 2px; }
-.gpick-panel .row-btns { margin-top: 10px; flex: none; }
 .gc-skill b { font-size: 14px; }
 .ct-line .mk { min-width: 36px; letter-spacing: -1px; font-size: 13px; }
 
@@ -767,7 +779,7 @@ em.up.very { color: #e04e00; letter-spacing: -2px; }
 /* ---- mouse on a PC: hover feedback ----------------------------------------------- */
 @media (hover: hover) and (pointer: fine) {
   .btn:hover, .tile:hover, .go-card:hover, .slot:hover, .lord-card:hover, .tbtn:hover, .pbtn:hover, .gcard:hover,
-  .gp:hover, .eq-item:hover, .diff-btn:hover, .sbtn:hover, .ibtn:hover, .hbtn:hover, .wp-call:hover,
+  .gro:not(.locked):hover, .eq-item:hover, .diff-btn:hover, .sbtn:hover, .ibtn:hover, .hbtn:hover, .wp-call:hover,
   .stepper button:hover, .buy:hover, .eq-tab:hover, .back-btn:hover, .tog:hover, .mini:hover, .version:hover, .aim-cancel:hover {
     filter: brightness(1.1);
   }
