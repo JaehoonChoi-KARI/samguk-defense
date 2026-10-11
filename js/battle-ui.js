@@ -16,11 +16,11 @@ import { battleSetup } from './army.js';
 import { troopIcon, generalIcon } from './sprites.js';
 import { sfx } from './audio.js';
 import { waveSummary } from './waves.js';
-import { tapWord } from './device.js';
+import { tapWord, uiScale } from './device.js';
 import { Tutorial } from './tutorial.js';
 import { DUEL } from './data.js';
 
-const TOP_ROW = 124; // screen px taken by the top row of the battle screen
+const TOP_ROW = 124; // HUD px taken by the top row of the battle screen
 
 // Was the stage's challenge met in this (won) battle?
 export function challengeMet(ch, sim) {
@@ -610,9 +610,10 @@ export class BattleController {
     left = Math.max(8, Math.min(W - r.width - 8, left));
     // below the top row (the wave panel and general cards) when it fits
     const low = Math.max(8, H - r.height - 8);
-    top = Math.max(Math.min(TOP_ROW, low), Math.min(low, top));
-    p.style.left = `${left}px`;
-    p.style.top = `${top}px`;
+    top = Math.max(Math.min(TOP_ROW * uiScale, low), Math.min(low, top));
+    // worked out in screen px; the HUD's own px are bigger on a phone
+    p.style.left = `${left / uiScale}px`;
+    p.style.top = `${top / uiScale}px`;
   }
 
   closePopup() {
@@ -749,7 +750,7 @@ export class BattleController {
         <div class="pop-hp gi-hp"><div class="bar"><i></i></div></div>
         <div class="pop-btns"><button class="pbtn gi-act" type="button"></button></div>`;
       const edge = (this.invGen || this.inv).getBoundingClientRect().left;
-      box.style.right = `${window.innerWidth - edge + 6}px`;
+      box.style.right = `${(window.innerWidth - edge) / uiScale + 6}px`;
       box.classList.remove('hidden');
       box.querySelector('.gi-act').addEventListener('click', e => {
         e.stopPropagation();

@@ -17,6 +17,7 @@ import { defaultSave, sanitize } from './save.js';
 import { applyResult } from './progression.js';
 import { unlockAudio, audioCtx, sfx, testSilentLoop } from './audio.js';
 import { playMusic, playJingle, stopMusic, MUSIC_TRACKS, musicNow } from './music.js';
+import { uiScale } from './device.js';
 
 const out = { ok: true, errors: [], checks: [], battles: [], flow: [] };
 const fail = msg => { out.ok = false; out.errors.push(msg); };
@@ -541,6 +542,12 @@ async function uiFlow(game) {
   const finder = new Bot(b.sim, {}); // the bot's list of places beside the road
   const freeFor = type => finder.pickPos(type, b.setup.troops[type]?.range || 100);
   const center = el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+  // every button row is inside the window (a phone shrinks the HUD to fit)
+  for (const sel of ['.tb-left', '.tb-right', '.inv', '.items', '.skills']) {
+    const r = q(`.bhud ${sel}`).getBoundingClientRect();
+    if (r.left < -1 || r.top < -1 || r.right > innerWidth + 1 || r.bottom > innerHeight + 1) fail(`${sel} sticks out of a ${innerWidth}x${innerHeight} window`);
+  }
+  if ((innerHeight < 600) !== (uiScale < 1)) fail(`page scale ${uiScale} in a ${innerWidth}x${innerHeight} window`);
   // the first battle teaches step by step; this run skips it (the full walk-through comes later)
   b.tut?.update();
   if (!b.tut || !b.tut.holding || q('.tut').classList.contains('hidden') || !q('.tut-focus')) fail('tutorial did not start in the first battle');

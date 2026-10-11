@@ -1,7 +1,7 @@
 // Game rules and numbers: troop types and counters, lords and their orders, equipment,
 // consumable items and growth formulas. Balance knobs live here.
 
-export const VERSION = '1.0.16'; // keep in sync with CACHE in sw.js
+export const VERSION = '1.0.17'; // keep in sync with CACHE in sw.js
 export const STAGE_COUNT = 20;
 export const GATE_HP = 60;
 export const MAX_LORD_LEVEL = 30;

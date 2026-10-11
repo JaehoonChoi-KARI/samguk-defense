@@ -8,6 +8,7 @@ import { LORDS } from './data.js';
 import { BattleController } from './battle-ui.js';
 import { applyResult, consumeItems } from './progression.js';
 import { SCREENS } from './screens.js';
+import { fitUi } from './device.js';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -20,6 +21,7 @@ if (testMode) useTestStorage();
 
 const view = { w: 0, h: 0, dpr: 1 };
 function resize() {
+  fitUi();
   view.dpr = Math.min(2, window.devicePixelRatio || 1);
   view.w = window.innerWidth;
   view.h = window.innerHeight;

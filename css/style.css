@@ -13,10 +13,14 @@
   --bad: #c0392b;
   --muted: #8a7458;
   --font: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
-  --safe-t: max(10px, env(safe-area-inset-top));
-  --safe-b: max(10px, env(safe-area-inset-bottom));
-  --safe-l: max(12px, env(safe-area-inset-left));
-  --safe-r: max(12px, env(safe-area-inset-right));
+  /* page scale and size: 1 and the window on an iPad, set by fitUi() (device.js) on a phone */
+  --ui-s: 1;
+  --W: 100vw;
+  --H: 100vh;
+  --safe-t: max(10px, calc(env(safe-area-inset-top) / var(--ui-s)));
+  --safe-b: max(10px, calc(env(safe-area-inset-bottom) / var(--ui-s)));
+  --safe-l: max(12px, calc(env(safe-area-inset-left) / var(--ui-s)));
+  --safe-r: max(12px, calc(env(safe-area-inset-right) / var(--ui-s)));
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -42,6 +46,13 @@ button { font-family: inherit; color: inherit; cursor: pointer; touch-action: ma
 #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 #ui, #overlay, #hud { position: fixed; inset: 0; pointer-events: none; }
 #ui > *, #overlay > * { pointer-events: auto; }
+/* a phone: the screens and the battle HUD are laid out on a taller page and shrunk to fit */
+html.scaled #ui, html.scaled #overlay, html.scaled #hud {
+  right: auto; bottom: auto; width: var(--W); height: var(--H);
+  transform: scale(var(--ui-s)); transform-origin: 0 0;
+}
+/* the shrunk page is as wide as an iPad's, so it keeps the iPad's columns */
+html.scaled .troop-cards, html.scaled .ct-grid, html.scaled .gcards.wide { grid-template-columns: repeat(3, 1fr); }
 
 h2 { margin: 0 0 12px; font-size: 24px; font-weight: 900; }
 small { font-weight: 500; }
@@ -266,7 +277,7 @@ small { font-weight: 500; }
   flex-wrap: wrap;
 }
 .back-btn + .hdr, .hdr { position: relative; }
-.barracks .hdr, .lord-screen .hdr, .equip .hdr { margin-left: 110px; }
+.barracks .hdr, .lord-screen .hdr, .equip .hdr, .generals .hdr { margin-left: 110px; }
 .hdr-face { width: 52px; height: 52px; background: rgba(255,255,255,0.12); border-radius: 12px; }
 .hdr-name { font-size: 20px; font-weight: 900; color: #fff3d0; }
 .hdr-name small { color: var(--paper2); font-size: 13px; }
@@ -512,7 +523,7 @@ em.up { color: #e07b00; font-style: normal; }
 .eq-tab { border: none; border-radius: 12px; padding: 10px 22px; font-size: 18px; font-weight: 900; background: rgba(255,255,255,0.15); color: var(--paper); min-height: 48px; }
 .eq-tab.on { background: var(--gold); color: var(--ink); }
 .eq-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding-bottom: 20px; }
-.eq-list { display: flex; flex-direction: column; gap: 6px; max-height: 62vh; overflow-y: auto; }
+.eq-list { display: flex; flex-direction: column; gap: 6px; max-height: calc(var(--H) * 0.62); overflow-y: auto; }
 .eq-item { border: 2px solid transparent; border-radius: 12px; background: rgba(255,255,255,0.6); padding: 8px 10px; text-align: left; font-size: 17px; min-height: 48px; display: flex; align-items: center; gap: 6px; }
 .eq-item.sel { border-color: var(--red); background: #fff; }
 .eq-item.worn { box-shadow: inset 4px 0 0 var(--good); }
@@ -597,7 +608,7 @@ em.up { color: #e07b00; font-style: normal; }
 /* between waves the next-wave panel sits in the top middle, over the stage name and challenge */
 .wave-panel {
   position: absolute; top: var(--safe-t); left: 50%; transform: translateX(-50%); z-index: 5;
-  max-width: calc(100vw - 2 * 310px);
+  max-width: calc(var(--W) - 2 * 310px);
   background: rgba(20, 12, 6, 0.92); border: 2px solid var(--gold2); border-radius: 14px;
   padding: 4px 6px 6px; display: flex; flex-direction: column; align-items: stretch; gap: 4px;
 }
@@ -661,7 +672,7 @@ em.up { color: #e07b00; font-style: normal; }
 @keyframes toast2 { 0% { opacity: 0; } 10%, 80% { opacity: 1; } 100% { opacity: 0; } }
 .tut {
   position: absolute; top: calc(var(--safe-t) + 74px); left: calc(var(--safe-l) + 8px); z-index: 40;
-  width: 390px; max-width: calc(100vw - 260px); background: rgba(255, 248, 225, 0.97); color: var(--ink); border: 4px solid var(--gold2);
+  width: 390px; max-width: calc(var(--W) - 260px); background: rgba(255, 248, 225, 0.97); color: var(--ink); border: 4px solid var(--gold2);
   border-radius: 16px; padding: 10px 14px 12px; font-size: 16px; font-weight: 700; line-height: 1.45;
   box-shadow: 0 8px 24px rgba(0,0,0,0.5); pointer-events: auto; animation: tutIn 0.25s ease-out;
 }
@@ -813,7 +824,7 @@ em.up.very { color: #e04e00; letter-spacing: -2px; }
 
 .map-story {
   position: absolute; left: var(--safe-l); top: 64px; bottom: var(--safe-b); z-index: 4;
-  width: clamp(280px, 33vw, 400px); display: flex; flex-direction: column; gap: 8px;
+  width: clamp(280px, calc(var(--W) * 0.33), 400px); display: flex; flex-direction: column; gap: 8px;
   background: linear-gradient(180deg, var(--paper), var(--paper2)); color: var(--ink);
   border: 3px solid #8c6a3a; border-radius: 16px; padding: 12px 14px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }

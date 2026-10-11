@@ -394,8 +394,7 @@ function mapScreen(game, { sel = null } = {}) {
 
   const layout = () => {
     const w = el.clientWidth || window.innerWidth, hh = el.clientHeight || window.innerHeight;
-    const pr = panel.getBoundingClientRect();
-    const left = pr.right + 8;
+    const left = panel.offsetLeft + panel.offsetWidth + 8;
     const fit = mapFit(left, 58, Math.max(200, w - left - 12), hh - 58 - 12);
     const route = story.stages.map((st, i) => ({ loc: st.loc, state: i < s.progress ? 'done' : i === s.progress ? 'next' : 'locked' }));
     drawChinaMap(el.querySelector('.map-canvas'), w, hh, Math.min(2, window.devicePixelRatio || 1), fit, route, F.color);
