@@ -2,10 +2,10 @@
 // battle (deploy, promote, skills, items). Used by the "추천 편성" button, the automated
 // tests and the balance tool.
 
-import { TROOPS, TROOP_KEYS, SKILLS, counterMult, FOES, GENERALS, GENERAL_PICKS, GROUND } from './data.js';
+import { TROOPS, TROOP_KEYS, SKILLS, counterMult, FOES, GENERALS, GENERAL_PICKS, GROUND, HORDE, GATE_HP } from './data.js';
 import { lordLeadership, troopUnlocked, unlockedGenerals } from './army.js';
-import { stageSummary, waveSummary } from './waves.js';
-import { pathAt, nearestOnPaths } from './maps.js';
+import { stageSummary, waveSummary, rng } from './waves.js';
+import { pathAt, nearestOnPath, nearestOnPaths } from './maps.js';
 import { sizeOf, footCells, footCenter } from './field.js';
 
 // How useful a troop type is against a mix of enemies (1 = even, higher = better).
@@ -55,8 +55,13 @@ export function recommendGenerals(save, waves) {
 // ---- battle autopilot -------------------------------------------------------------
 
 export class Bot {
-  constructor(sim, { callEarly = false, useSkills = true, useItems = true, bossFocus = true } = {}) {
+  // strategy: place like a player who plans (holds the road where roads join, uses choke and
+  // hill cells and formations); false = a player without a plan, who puts each unit on any
+  // free cell it can fight from.
+  constructor(sim, { callEarly = false, useSkills = true, useItems = true, bossFocus = true, strategy = true } = {}) {
     this.bossFocus = bossFocus;
+    this.strategy = strategy;
+    this.rand = rng(`naive:${sim.setup.seed}:${sim.setup.stage.id}`);
     this.sim = sim;
     this.t = 0;
     this.callEarly = callEarly;
@@ -117,25 +122,34 @@ export class Bot {
         if (keys.some(k => !sim.field.cells.has(k))) continue;
         const p = footCenter(cell.c, cell.r, size);
         const near = nearestOnPaths(sim.paths, p.x, p.y);
-        list.push({ c: cell.c, r: cell.r, size, keys, x: p.x, y: p.y, ground: sim.groundOf(keys), road: near.dist, frac: near.d / sim.paths[near.path].len });
+        list.push({
+          c: cell.c, r: cell.r, size, keys, x: p.x, y: p.y, ground: sim.groundOf(keys), road: near.dist, frac: near.d / sim.paths[near.path].len,
+          roads: sim.paths.map(pp => nearestOnPath(pp, p.x, p.y).dist), // how far each road is
+        });
       }
       this.anchors[size] = list;
     }
     return this.anchors[size].filter(a => a.keys.every(k => !sim.occ.has(k)));
   }
 
-  // Melee units go where their guard circle covers the later road (a choke is best), ranged
-  // units where they see the most road (hills stretch that); formations are a bonus.
+  // Melee units go where their guard circle covers the later road (a choke is best, and where
+  // roads join one squad holds them all), ranged units where they see the most road (hills
+  // stretch that); formations are a bonus.
   pickPos(type, range) {
     const sim = this.sim;
     const melee = TROOPS[type].melee;
+    if (!this.strategy) {
+      const ok = this.freeSpots(type).filter(a => a.road <= range * (melee ? 0.75 : 0.8));
+      return ok.length ? ok[Math.floor(this.rand() * ok.length)] : null;
+    }
     let best = null, bs = -Infinity;
     for (const a of this.freeSpots(type)) {
       const G = GROUND[a.ground];
       let score;
       if (melee) {
         if (a.road > range * 0.75) continue; // must reach the road from its post
-        score = 1 - Math.abs(a.frac - 0.62) + this.coverage(a, range) * 0.002 + (a.ground === 'choke' ? 0.3 : 0);
+        const roads = a.roads.filter(d => d <= range * 0.75).length;
+        score = 1 - Math.abs(a.frac - 0.62) + this.coverage(a, range) * 0.002 + (a.ground === 'choke' ? 0.3 : 0) + 0.4 * (roads - 1);
       } else {
         score = this.coverage(a, range * (1 + (G.range || 0))) * (1 + (G.atk || 0) + (a.ground === 'forest' ? 0.08 : 0));
       }
@@ -192,9 +206,9 @@ export class Bot {
     const sim = this.sim;
     const boss = this.bossFocus ? sim.boss() : null;
     const bossNear = boss && boss.state !== 'flee' && boss.d > sim.paths[boss.path].len * 0.35;
-    const fighting = sim.foes.filter(f => f.state !== 'flee').length;
+    const fighting = sim.foes.filter(f => f.state !== 'flee').length / HORDE;
     const spare = sim.totalWaves - 1 - sim.waveIdx >= 4; // it comes back before the last wave
-    const danger = sim.gate <= 12 || sim.foes.filter(f => f.state === 'walk' && f.d > sim.paths[f.path].len * 0.85).length >= 5;
+    const danger = sim.gate <= GATE_HP * 0.6 || sim.foes.filter(f => f.state === 'walk' && f.d > sim.paths[f.path].len * 0.85).length >= 5 * HORDE;
     const busy = bossNear || danger || (spare && fighting >= 10 + sim.n * 0.4);
     sim.skills.forEach((s, i) => {
       if (!s || s.cdT > 0) return;
@@ -231,11 +245,11 @@ export class Bot {
       if (!spare && !danger) return;
       if (def.target === 'path') {
         const close = sim.foes.filter(f => f.state === 'walk' && f.d > sim.paths[f.path].len * 0.75);
-        if (close.length >= 4) { const f = close[0]; const q = pathAt(sim.paths[f.path], f.d + 50); sim.castSkill(i, q.x, q.y); }
+        if (close.length >= 4 * HORDE) { const f = close[0]; const q = pathAt(sim.paths[f.path], f.d + 50); sim.castSkill(i, q.x, q.y); }
         return;
       }
       const c = this.cluster(def.radius || 80);
-      if (c.at && c.n >= 8) sim.castSkill(i, c.at.x, c.at.y);
+      if (c.at && c.n >= 8 * HORDE) sim.castSkill(i, c.at.x, c.at.y);
     });
   }
 
@@ -250,7 +264,7 @@ export class Bot {
     }
     if (sim.items.bomb > 0) {
       const c = this.cluster(100);
-      if (c.at && c.n >= 7) sim.useItem('bomb', c.at.x, c.at.y);
+      if (c.at && c.n >= 7 * HORDE) sim.useItem('bomb', c.at.x, c.at.y);
     }
     if (sim.items.potion > 0) {
       const hurt = sim.squads.filter(q => q.hp < q.maxHp * 0.4);
@@ -259,7 +273,7 @@ export class Bot {
     if (sim.items.wall > 0) {
       const p = sim.paths[0];
       const close = sim.foes.filter(f => f.d > this.sim.paths[f.path].len * 0.8 && f.state === 'walk');
-      if (close.length >= 3) {
+      if (close.length >= 3 * HORDE) {
         const q = pathAt(p, p.len * 0.88);
         sim.useItem('wall', q.x, q.y);
       }

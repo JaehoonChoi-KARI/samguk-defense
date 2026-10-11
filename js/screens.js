@@ -2,7 +2,7 @@
 // battle preparation, barracks, lord skills, equipment, counter chart, results, pause, ending.
 
 import {
-  VERSION, TROOPS, TROOP_KEYS, STRONG, STRONG_WHY, LORDS, LORD_KEYS, SKILLS, SKILL_UNLOCK, EQUIPS, GRADES, SLOTS,
+  VERSION, GATE_HP, TROOPS, TROOP_KEYS, STRONG, STRONG_WHY, LORDS, LORD_KEYS, SKILLS, SKILL_UNLOCK, EQUIPS, GRADES, SLOTS,
   ITEMS, ITEM_KEYS, ITEM_CARRY_MAX, FACTIONS, TROOP_UNLOCK, BOSS_SKILLS, MAX_TROOP_LEVEL, MAX_ENHANCE,
   STAGE_COUNT, troopUpCost, enhanceCost, equipFx, fxText, expNeed, recLevel, stageGold, fmt, weakTo, pct,
   DIFFS, diffOf, GENERALS, GEN_SPECIALS, GENERAL_PICKS, COUNTER_MARK, COUNTER_NAME, COUNTER_MULT, relations, bestLevel, RING,
@@ -485,6 +485,7 @@ function prepScreen(game, { stageIdx }) {
           <div class="field-note">
             <div><b>${weather.icon} ${weather.name}</b>${weather !== WEATHER.clear ? ` <small>${weather.text}</small>` : ''}</div>
             <div>진지 칸 ${field.list.length} · ⛰️ 언덕 ${field.counts.hill} · 🌲 숲 ${field.counts.forest} · 🚧 길목 ${field.counts.choke}</div>
+            ${layoutN.paths.length > 1 ? `<div class="road-tip">💡 길이 ${layoutN.paths.length}갈래예요. 길이 하나로 합쳐지는 곳에 막는 부대를 놓으면 한 부대로 모든 길을 막을 수 있어요.</div>` : ''}
           </div>
           <div class="challenge ${s.stages[stageIdx].ch ? 'done' : ''}">${ch.icon} 도전: ${ch.text} ${s.stages[stageIdx].ch ? '✅' : `<small>첫 성공 +${fmt(challengeGold(n) * diffOf(s).gold)}💰</small>`}</div>
         </section>
@@ -974,6 +975,7 @@ function countersScreen(game, arg = {}) {
           <div class="g-line">🏳️ <b>사기</b> <small>적장이 크게 다치거나 쓰러지면 적병이 겁먹고 달아나요</small></div>
           <div class="g-line">🌬️ <b>날씨</b> <small>동남풍은 불이 2배, 비는 불이 약해져요. 안개와 밤은 사거리가 줄어요</small></div>
           <div class="g-line">🎯 <b>도전 과제</b> <small>지역마다 하나씩, 처음 해내면 골드를 더 받아요</small></div>
+          <div class="g-line">🛣️ <b>여러 갈래 길</b> <small>길이 하나로 합쳐지는 곳을 막으면 한 부대로 모든 길을 막아요</small></div>
         </div>
       </div>
     </div>`);
@@ -1021,7 +1023,7 @@ function resultScreen(game, { r, out }) {
       <div class="panel result-panel">
         <h1>${r.won ? '🏆 승리!' : '💥 패배...'}</h1>
         ${r.won ? `<div class="big-stars">${[1, 2, 3].map(k => `<span class="${k <= r.stars ? 'on' : ''}" style="animation-delay:${k * 0.25}s">★</span>`).join('')}</div>
-        <div class="gate-left">성문 내구도 ${r.gate}/20 남음</div>` : `<div class="gate-left">${r.reason === 'boss' ? `적장 ${st.boss.name}이(가) 성문을 넘었어요` : `${r.wavesReached}/${r.totalWaves} 웨이브까지 버텼어요`}</div>`}
+        <div class="gate-left">성문 내구도 ${r.gate}/${GATE_HP} 남음</div>` : `<div class="gate-left">${r.reason === 'boss' ? `적장 ${st.boss.name}이(가) 성문을 넘었어요` : `${r.wavesReached}/${r.totalWaves} 웨이브까지 버텼어요`}</div>`}
         ${r.won ? `<div class="outro">${st.outro.map(l => `<p>${l}</p>`).join('')}</div>` : ''}
         <div class="rewards">${lines.join('') || '<div class="rw muted">보상 없음</div>'}</div>
         ${tip ? `<div class="tip">${tip}</div>` : ''}

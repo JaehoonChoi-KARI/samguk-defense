@@ -7,7 +7,7 @@ import {
   TROOPS, FOES, STAR_MULT, STAR_RANGE, STAR_COST, RETREAT_REFUND, GATE_HP, counterMult, counterLevel, BOSS,
   SKILLS, ITEMS, stageHpMult, stageAtkMult, killFood, PASSIVE_FOOD, TROOP_KEYS, diffScale,
   GENERALS, GEN_SPECIALS, GENERAL_RECOVER, GENERAL_MOVE_WAIT, GROUND, FORMATIONS,
-  WEATHER, DUEL, duelChance, ROUT, skillDur, startFood, AURA_R,
+  WEATHER, DUEL, duelChance, ROUT, skillDur, startFood, AURA_R, HORDE, hordeHp, hordeAtk,
 } from './data.js';
 import { pathAt, nearestOnPaths, WORLD_W, WORLD_H } from './maps.js';
 import { cellKey, sizeOf, anchorAt, footCenter, footCells, footNeighbours } from './field.js';
@@ -18,7 +18,8 @@ const REGEN_DELAY = 4; // seconds without being hit before resting
 const REGEN_RATE = 0.02; // of max HP per second
 const NEXT_WAVE_WAIT = 25; // seconds between one wave fully marching in and the next
 const EARLY_BONUS = 2; // 군량 per second skipped
-const MAX_RAIDERS = 2;
+const MAX_RAIDERS = 2 * HORDE;
+const RETARGET = 70; // an arrow whose soldier already fell hits another this close
 const BOSS_ENGAGE = 150; // an enemy general stops to fight our units this close to it
 
 export class Sim {
@@ -32,6 +33,7 @@ export class Sim {
     const D = setup.diff || { hp: 1, atk: 1 };
     this.hpMult = stageHpMult(this.n) * diffScale(D.hp, this.n);
     this.atkMult = stageAtkMult(this.n) * diffScale(D.atk, this.n);
+    this.soldier = { hp: D.shp || 1, atk: D.satk || 1 }; // a difficulty can toughen the soldiers alone
     this.mods = setup.mods;
     this.weather = WEATHER[setup.weather] || WEATHER.clear;
     this.duel = null; // a 일기토 going on: { gen, boss, t, win }
@@ -116,7 +118,7 @@ export class Sim {
 
   nextWave() { return this.waves[this.waveIdx + 1] || null; }
 
-  stars() { return this.gate >= 18 ? 3 : this.gate >= 10 ? 2 : 1; }
+  stars() { return this.gate >= GATE_HP * 0.9 ? 3 : this.gate >= GATE_HP * 0.5 ? 2 : 1; }
 
   // ---- commands --------------------------------------------------------------------
 
@@ -517,12 +519,14 @@ export class Sim {
   spawnFoe(type, pathIdx, boss = false, d = 0) {
     const F = FOES[type];
     const path = this.paths[pathIdx];
+    // the horde: many weaker soldiers (the enemy general is left alone)
+    const H = boss ? { hp: 1, atk: 1 } : { hp: hordeHp(this.n) * this.soldier.hp, atk: hordeAtk(this.n) * this.soldier.atk };
     const f = {
       kind: 'foe', id: this.nextId++, type, boss, path: pathIdx, d,
-      off: (this.r() - 0.5) * 20, x: 0, y: 0,
-      hp: F.hp * this.hpMult, atk: F.atk * this.atkMult, cd: F.cd, cdT: 0.5 + this.r() * 0.5,
+      off: (this.r() - 0.5) * 30, x: 0, y: 0,
+      hp: F.hp * this.hpMult * H.hp, atk: F.atk * this.atkMult * H.atk, cd: F.cd, cdT: 0.5 + this.r() * 0.5,
       speed: F.speed * (0.93 + this.r() * 0.14), range: (F.range || 0) * (this.weather.range || 1),
-      gate: F.gate, reward: killFood(type, this.n),
+      gate: F.gate, reward: killFood(type, this.n) / (boss ? 1 : HORDE),
       state: 'walk', blocker: null, raid: null, raidCd: 0,
       slowT: 0, slow: 0, burnT: 0, burnDps: 0, stunT: 0, rallyT: 0, healT: 1 + this.r() * 2,
       cmT: 0, face: 1, walkT: this.r() * 10, atkAnim: 0, chargeT: 0,
@@ -840,10 +844,10 @@ export class Sim {
         break;
       case 'summon': {
         const types = Object.keys(this.setup.stage.mix || { infantry: 1 });
-        const count = this.n <= 5 ? 2 : this.n <= 12 ? 3 : 4; // early generals call fewer helpers
+        const count = (this.n <= 5 ? 2 : this.n <= 12 ? 3 : 4) * HORDE; // early generals call fewer helpers
         for (let k = 0; k < count; k++) {
           const t = types[Math.floor(this.r() * types.length)];
-          this.spawnFoe(t, f.path, false, Math.max(0, f.d - 20 - k * 22));
+          this.spawnFoe(t, f.path, false, Math.max(0, f.d - 20 - k * 22 / HORDE));
         }
         this.emit({ k: 'bossSkill', skill: 'summon', x: f.x, y: f.y, name: f.name });
         break;
@@ -879,7 +883,7 @@ export class Sim {
     for (const f of this.foes) {
       if (f.state !== 'walk' || f.chargeT > 0) continue;
       for (const b of blockers) {
-        if (b.blocking.length >= b.block) continue;
+        if (b.blocking.length >= b.block * (b.kind === 'wall' ? 1 : HORDE)) continue;
         const reach = b.kind === 'wall' ? 30 : 28;
         if (dist(f, b) < reach) {
           f.state = 'blocked';
@@ -1153,6 +1157,16 @@ export class Sim {
     }
   }
 
+  nearestFoe(x, y, range) {
+    let best = null, bd = range;
+    for (const f of this.foes) {
+      if (f.hp <= 0 || f.state === 'flee') continue;
+      const d = Math.hypot(f.x - x, f.y - y);
+      if (d < bd) { bd = d; best = f; }
+    }
+    return best;
+  }
+
   regen(u, dt) {
     if (u.hp >= u.maxHp) return;
     if (this.time - u.lastHit > REGEN_DELAY) {
@@ -1198,7 +1212,12 @@ export class Sim {
         }
         continue;
       }
-      const alive = p.target && p.target.hp > 0 && !p.target.gone && !p.target.dead;
+      let alive = p.target && p.target.hp > 0 && !p.target.gone && !p.target.dead;
+      if (!alive && p.side === 'p' && p.kind === 'arrow') {
+        // its soldier fell to another shot: the arrow flies on into the crowd around it
+        const next = this.nearestFoe(p.tx, p.ty, RETARGET);
+        if (next) { p.target = next; alive = true; }
+      }
       if (alive) { p.tx = p.target.x; p.ty = p.target.y - (p.side === 'f' ? 8 : 6); }
       const dx = p.tx - p.x, dy = p.ty - p.y;
       const d = Math.hypot(dx, dy);
@@ -1206,7 +1225,7 @@ export class Sim {
       p.ang = Math.atan2(dy, dx);
       if (d <= step + 4) {
         this.removeProj(p);
-        if (!alive) continue;
+        if (!alive && !(p.side === 'p' && p.kind === 'fire')) continue; // fire still bursts where it lands
         if (p.side === 'p') {
           if (p.kind === 'fire') {
             this.splash({ ...p, dmg: p.dmg * (this.weather.fire || 1) }, p.tx, p.ty);

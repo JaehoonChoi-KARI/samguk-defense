@@ -24,7 +24,7 @@ import { DUEL } from './data.js';
 export function challengeMet(ch, sim) {
   const S = sim.stats;
   switch (ch.key) {
-    case 'gate20': return sim.gate >= 20;
+    case 'gate20': return sim.gate >= GATE_HP;
     case 'noItems': return Object.values(sim.itemsUsed).every(v => !v);
     case 'noType': return !S.types.has(ch.type);
     case 'duelWin': return S.duelWins > 0;
@@ -187,7 +187,7 @@ export class BattleController {
     this.set('gate', '.v-gate', String(Math.max(0, sim.gate)));
     this.set('food', '.v-food', fmt(Math.floor(sim.food)));
     this.set('wave', '.v-wave', `${Math.max(0, sim.waveIdx + 1)}/${sim.totalWaves}`);
-    this.$('.pill.gate').classList.toggle('low', sim.gate <= 6);
+    this.$('.pill.gate').classList.toggle('low', sim.gate <= GATE_HP * 0.3);
 
     // boss bar
     const boss = sim.boss();

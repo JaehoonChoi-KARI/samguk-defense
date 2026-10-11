@@ -12,9 +12,11 @@
 //   &troop=0 (extra troop levels)  &early=0 (call waves early)  &dump=1 (list enemies when a battle stalls)
 //   &hp=1 &atk=1 (multiply enemy hp / atk to try values)  &items=0 (bot uses no consumable items)
 //   &bosshp=1 (multiply enemy general hp)  &scd=1 (multiply lord skill cooldowns)  &gens=0 (no generals)
-//   &talents=plan|troop|none (how the lord's talent points are spent)
+//   &talents=plan|troop|none (how the lord's talent points are spent)  &fhp= &fatk= (horde soldier hp / atk)
+//   &naive=1 (the bot places without a plan: no road joins, choke or hill cells, formations)
 import { STORIES } from '../js/stories.js';
 import { buildWaves, WAVE_TUNE } from '../js/waves.js';
+import { HORDE_STATS } from '../js/data.js';
 import { stageLayout } from '../js/maps.js';
 import { battleSetup } from '../js/army.js';
 import { Sim } from '../js/sim.js';
@@ -32,6 +34,10 @@ const early = P.get('early') === '1';
 const useItems = P.get('items') !== '0';
 if (P.has('wsize')) WAVE_TUNE.size = +P.get('wsize'); // later stages: wave size and tightness exponents
 if (P.has('wtight')) WAVE_TUNE.tight = +P.get('wtight');
+// one soldier of the horde: hp / atk at stage 1, growth per stage, cap
+for (const [q, k] of [['fhp', 'hp'], ['fhpup', 'hpUp'], ['fhpmax', 'hpMax'], ['fatk', 'atk'], ['fatkup', 'atkUp'], ['fatkmax', 'atkMax']]) {
+  if (P.has(q)) HORDE_STATS[k] = +P.get(q);
+}
 // troop-first talents: the troop tree up to its last row, then the suggested plan
 const TROOP_PLAN = ['meleeHp', 'rangedAtk', 'meleeHp', 'rangedAtk', 'meleeHp', 'rangedAtk', 'eliteFoot', 'eliteBow', 'eliteFoot', 'eliteBow',
   'eliteFoot', 'eliteBow', 'eliteHorse', 'eliteSiege', 'eliteHorse', 'eliteSiege', 'counter', 'eliteHorse', 'eliteSiege', ...TALENT_PLAN];
@@ -49,10 +55,12 @@ for (const lord of lords) {
       s.picks = P.get('gens') === '0' ? [] : recommendGenerals(s, ws);
       const setup = battleSetup(s, n - 1, stage, { seed: `bal${r}` });
       setup.diff = { ...setup.diff, hp: setup.diff.hp * hpK, atk: setup.diff.atk * atkK };
+      if (P.has('shp')) setup.diff.shp = +P.get('shp'); // soldiers only (not the enemy general)
+      if (P.has('satk')) setup.diff.satk = +P.get('satk');
       if (P.has('bosshp')) setup.bossHp = +P.get('bosshp');
       if (P.has('scd')) setup.skills.forEach(sk => { if (sk) sk.cd *= +P.get('scd'); });
       const sim = new Sim(setup);
-      autoplay(sim, { callEarly: early, useItems });
+      autoplay(sim, { callEarly: early, useItems, strategy: P.get('naive') !== '1' });
       if (sim.state === 'won') won++;
       if (sim.lostReason === 'boss') bossLoss++;
       gate += sim.gate;

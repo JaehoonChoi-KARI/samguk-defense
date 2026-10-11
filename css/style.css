@@ -938,6 +938,7 @@ em.up.very { color: #e04e00; letter-spacing: -2px; }
   .inv-gen { right: calc(var(--safe-r) + 102px); width: 92px; gap: 4px; padding: 4px; }
 }
 .boss-warn { font-size: 12px; font-weight: 900; color: #fff; background: var(--red); border-radius: 8px; padding: 1px 7px; }
+.road-tip { margin-top: 4px; font-size: 13px; font-weight: 800; color: #2f6a9a; }
 .field-note { background: rgba(255,255,255,0.5); border-radius: 10px; padding: 5px 9px; margin-top: 6px; font-size: 14px; display: flex; flex-direction: column; gap: 2px; }
 .field-note small { color: var(--ink2); }
 .challenge { background: #fff3c4; border-radius: 10px; padding: 5px 9px; margin-top: 6px; font-size: 14px; font-weight: 800; }

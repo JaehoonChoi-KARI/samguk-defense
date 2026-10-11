@@ -1,7 +1,7 @@
 // Enemy waves for a stage, generated from the story's troop mix. Seeded by the stage id,
 // so the same stage always brings the same army (the scouting report stays true).
 
-import { TROOP_KEYS } from './data.js';
+import { TROOP_KEYS, HORDE } from './data.js';
 
 export function rng(seed) {
   let s = 0;
@@ -45,7 +45,7 @@ export function buildWaves(stage, n, pathCount) {
   const tight = wavePack(n) ** WAVE_TUNE.tight;
   const waves = [];
   for (let i = 0; i < W; i++) {
-    let budget = waveBudget(n, i, W);
+    let budget = waveBudget(n, i, W) * HORDE;
     // Each wave leans on one main type so the next-wave preview matters.
     const main = i === 0 ? mix.slice().sort((a, b) => b[1] - a[1])[0][0] : pick(r, mix);
     const counts = {};
@@ -61,10 +61,12 @@ export function buildWaves(stage, n, pathCount) {
     for (const t of order) {
       let left = counts[t];
       while (left > 0) {
-        const size = Math.min(left, t === 'catapult' ? 2 : 3 + Math.floor(r() * 4));
+        // a group is HORDE times bigger and marches HORDE times closer, so a wave takes as long
+        const size = Math.min(left, (t === 'catapult' ? 2 : 3 + Math.floor(r() * 4)) * HORDE);
         const path = pathCount > 1 ? (gi + i) % pathCount : 0;
-        groups.push({ type: t, count: size, path, gap: GAP[t] / tight, at: Math.round(at * 10) / 10 });
-        at += (size * GAP[t] * 0.7 + 1.5 + r() * 1.5) / tight;
+        const gap = GAP[t] / HORDE;
+        groups.push({ type: t, count: size, path, gap: gap / tight, at: Math.round(at * 10) / 10 });
+        at += (size * gap * 0.7 + 1.5 + r() * 1.5) / tight;
         left -= size;
         gi++;
       }

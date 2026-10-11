@@ -310,7 +310,7 @@ function botBattles() {
         cc_tiger: hit && (sim.stats.kills > 0 || sim.foes.some(f => f.stunT > 2)),
         sq_volley: sim.buff('rate') > 0,
         sq_fire: sim.zones.length > zones0,
-        sq_guard: sim.buff('guard') > 0 && sim.gate === GATE_HP - 1,
+        sq_guard: sim.buff('guard') > 0 && sim.gate === GATE_HP,
       };
       for (const key of LORDS[lord].skills) if (!got[key]) fail(`order ${key} did nothing`);
       // orders run out after their time; then the buttons wait for the rest of the 3 minutes
@@ -650,7 +650,7 @@ async function shot(game, name, params) {
   else if (name === 'storybook') { s.read = []; game.show('storybook', { chapter: STORIES[lord].stages[n - 2]?.id || 'prologue' }); }
   else if (name === 'picker') { game.show('prep', { stageIdx: n - 1 }); document.querySelector('.gp').click(); }
   else if (name === 'result') {
-    const r = { stageIdx: n - 1, won: true, stars: 3, gate: 19, kills: 40, itemsUsed: {}, wavesReached: 5, totalWaves: 5 };
+    const r = { stageIdx: n - 1, won: true, stars: 3, gate: 57, kills: 120, itemsUsed: {}, wavesReached: 5, totalWaves: 5 };
     s.stages[n - 1] = { stars: 0, clears: 0 };
     s.progress = n - 1;
     const o = applyResult(s, STORIES[lord], r);

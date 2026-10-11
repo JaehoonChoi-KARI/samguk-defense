@@ -1,9 +1,9 @@
 // Game rules and numbers: troop types and counters, lords and their orders, equipment,
 // consumable items and growth formulas. Balance knobs live here.
 
-export const VERSION = '1.0.8'; // keep in sync with CACHE in sw.js
+export const VERSION = '1.0.9'; // keep in sync with CACHE in sw.js
 export const STAGE_COUNT = 20;
-export const GATE_HP = 20;
+export const GATE_HP = 60;
 export const MAX_LORD_LEVEL = 30;
 export const MAX_TROOP_LEVEL = 20;
 export const MAX_SKILL_LEVEL = 5;
@@ -47,6 +47,15 @@ export const TROOPS = {
     desc: '아주 멀리 큰 돌을 던져 여럿을 한꺼번에 때려요.',
   },
 };
+
+// Waves bring HORDE times as many soldiers as the numbers below were made for, each one weaker
+// and worth a third of the 군량. A melee squad holds HORDE times as many of them, and the gate is
+// HORDE times as big. The enemy general is not affected. Soldiers are weakest in the first
+// stages, where we have no catapults or strategists to hit a crowd yet.
+export const HORDE = 3;
+export const HORDE_STATS = { hp: 0.36, hpUp: 0.013, hpMax: 0.56, atk: 0.3, atkUp: 0.006, atkMax: 0.42 };
+export const hordeHp = n => Math.min(HORDE_STATS.hpMax, HORDE_STATS.hp + HORDE_STATS.hpUp * (n - 1));
+export const hordeAtk = n => Math.min(HORDE_STATS.atkMax, HORDE_STATS.atk + HORDE_STATS.atkUp * (n - 1));
 
 // Enemy soldiers at stage 1 (stage scaling multiplies hp/atk).
 export const FOES = {
@@ -181,7 +190,7 @@ export const GROUND = {
   plain: { name: '평지', icon: '', text: '' },
   hill: { name: '언덕', icon: '⛰️', text: '원거리 부대 사거리 +20%, 공격 +10%', range: 0.2, atk: 0.1 },
   forest: { name: '숲', icon: '🌲', text: '매복: 적의 화살·돌·기습을 받지 않고, 첫 공격은 2배', ambush: 2 },
-  choke: { name: '길목', icon: '🚧', text: '근접 부대가 막는 적 +1', block: 1 },
+  choke: { name: '길목', icon: '🚧', text: '근접 부대가 적을 더 많이 막아요', block: 1 },
 };
 
 // Formations: squads in cells side by side (up, down, left, right) help each other.
@@ -297,9 +306,9 @@ export const SKILLS = {
     desc: lv => `병사들이 고른 곳에 불을 질러 10초 동안 불바다, 적이 느려져요 (위력 ${lvPct(lv)}, 동남풍이면 2배)`,
   },
   sq_guard: {
-    name: '강동의 철벽', icon: '🛡️', target: 'self', cd: SKILL_CD, dur: 30, gate: 2,
+    name: '강동의 철벽', icon: '🛡️', target: 'self', cd: SKILL_CD, dur: 30, gate: 6,
     power: grow(0.3, 0.05),
-    desc: lv => `30초 동안 모든 부대와 장수가 받는 피해 -${pct(grow(0.3, 0.05)(lv))}, 성문 +2`,
+    desc: lv => `30초 동안 모든 부대와 장수가 받는 피해 -${pct(grow(0.3, 0.05)(lv))}, 성문 +6`,
   },
 };
 // Talents and treasure can stretch how long a skill lasts.
@@ -413,11 +422,13 @@ export const REPLAY_RATE = 0.5;
 export const NO_REWARD_GAP = 2; // lord level ≥ recommended + this → replays give nothing
 
 // Difficulty is chosen with the lord for a new game. 지옥 appears once an ending has been seen on this device.
+// shp / satk toughen the soldiers alone (not the enemy general): 쉬움 stays easy with a plan but
+// is lost now and then by a player who puts units anywhere.
 export const DIFFS = [
-  { key: 'easy', name: '쉬움', icon: '🌱', hp: 1.33, atk: 1.2, gold: 0.85, desc: '적이 약해요. 처음 하는 사람에게 추천' },
-  { key: 'normal', name: '보통', icon: '⚔️', hp: 2.41, atk: 1.75, gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
-  { key: 'hard', name: '어려움', icon: '🔥', hp: 2.93, atk: 2.03, gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
-  { key: 'hell', name: '지옥', icon: '💀', hp: 3.45, atk: 2.32, gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
+  { key: 'easy', name: '쉬움', icon: '🌱', hp: 1.33, atk: 1.2, shp: 1.65, satk: 1.45, gold: 0.85, desc: '적이 약해요. 처음 하는 사람에게 추천' },
+  { key: 'normal', name: '보통', icon: '⚔️', hp: 2.63, atk: 1.79, gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
+  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.4, atk: 2.21, gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
+  { key: 'hell', name: '지옥', icon: '💀', hp: 4.11, atk: 2.58, gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
 ];
 export const diffOf = save => DIFFS[save?.diff ?? 1] || DIFFS[1];
 // Harder difficulties bite less in the first stages (a new 지옥 game still starts at Lv 1).
