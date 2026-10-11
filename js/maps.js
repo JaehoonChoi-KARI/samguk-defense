@@ -1,5 +1,4 @@
-// Map data: places on the China campaign map, battle road layouts and the
-// deployment spots generated along those roads.
+// Map data: places on the China campaign map and the battle road layouts.
 
 // ---- Campaign map (1200 × 800 map units) -----------------------------------------
 
@@ -86,7 +85,7 @@ export const MOUNTAINS = [
 export const WORLD_W = 1200;
 export const WORLD_H = 840;
 
-// Screen corners covered by the battle HUD; no deployment spots there.
+// Screen corners covered by the battle HUD; no build cells there.
 export const HUD_ZONES = [
   { x0: 0, y0: 0, x1: WORLD_W, y1: 78 },
   { x0: 0, y0: 690, x1: 300, y1: WORLD_H },
@@ -204,63 +203,19 @@ export function nearestOnPaths(paths, x, y) {
   return best;
 }
 
-const inHud = (x, y, pad = 0) => HUD_ZONES.some(z => x > z.x0 - pad && x < z.x1 + pad && y > z.y0 - pad && y < z.y1 + pad);
-
-// Candidate spots on both sides of every road, kept where they fit.
-function makeSpots(paths, maxSpots) {
-  const gate = paths[0].pts[paths[0].pts.length - 1];
-  const cands = [];
-  for (const path of paths) {
-    for (let d = 120; d < path.len - 90; d += 52) {
-      const p = pathAt(path, d);
-      const nx = -Math.sin(p.ang), ny = Math.cos(p.ang);
-      for (const side of [-1, 1]) cands.push({ x: p.x + nx * 80 * side, y: p.y + ny * 80 * side });
-    }
-  }
-  const ok = cands.filter(c =>
-    c.x > 50 && c.x < WORLD_W - 50 && c.y > 70 && c.y < WORLD_H - 40 &&
-    !inHud(c.x, c.y, 22) &&
-    Math.hypot(c.x - gate.x, c.y - gate.y) > 110 &&
-    paths.every(p => nearestOnPath(p, c.x, c.y).dist > 60));
-  // How much road each candidate can reach: the busiest spots are kept first.
-  for (const c of ok) {
-    let cover = 0;
-    for (const p of paths) {
-      for (let d = 0; d < p.len; d += 20) {
-        const q = pathAt(p, d);
-        if (Math.hypot(q.x - c.x, q.y - c.y) < 190) cover += 20;
-      }
-    }
-    c.cover = cover;
-  }
-  ok.sort((a, b) => b.cover - a.cover);
-  const spots = [];
-  for (const c of ok) {
-    if (spots.length >= maxSpots) break;
-    if (spots.every(s => Math.hypot(s.x - c.x, s.y - c.y) > 96)) spots.push(c);
-  }
-  return spots.map((s, i) => {
-    const g = nearestOnPaths(paths, s.x, s.y);
-    return { id: i, x: Math.round(s.x), y: Math.round(s.y), guard: { x: g.x, y: g.y, path: g.path, d: g.d } };
-  });
-}
-
 const layoutCache = new Map();
 
-// Battle map for stage n (1..20): { name, paths, spots, gate, entrances }.
+// Battle map for stage n (1..20): { name, paths, gate, entrances }. Build cells are in field.js.
 export function stageLayout(n) {
   if (layoutCache.has(n)) return layoutCache.get(n);
   const [name, mirror] = STAGE_LAYOUTS[(n - 1) % STAGE_LAYOUTS.length];
   const raw = BASE_LAYOUTS[name].map(pts => pts.map(([x, y]) => [mirror ? WORLD_W - x : x, y]));
   const paths = raw.map(makePath);
-  const maxSpots = Math.min(18, 9 + Math.floor(n / 2));
-  const spots = makeSpots(paths, maxSpots);
   const g = paths[0].pts[paths[0].pts.length - 1];
   const layout = {
     name,
     mirror: !!mirror,
     paths,
-    spots,
     gate: { x: g.x, y: g.y, dir: mirror ? -1 : 1 },
     entrances: paths.map(p => p.pts[0]),
   };

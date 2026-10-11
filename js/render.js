@@ -1,7 +1,8 @@
 // Draws a battle: cached terrain + roads, then units, shots and effects every frame.
 
-import { TROOPS, FACTIONS, LORDS, SKILLS, ITEMS, GATE_HP, COUNTER_MARK, GENERALS, GEN_SPECIALS } from './data.js';
+import { TROOPS, FACTIONS, LORDS, SKILLS, ITEMS, GATE_HP, COUNTER_MARK, GENERALS, GEN_SPECIALS, GROUND, FORMATIONS, DUEL } from './data.js';
 import { WORLD_W, WORLD_H, nearestOnPath, pathAt } from './maps.js';
+import { CELL, cellKey, inWater } from './field.js';
 import { drawSoldier, drawSquad, drawLord, drawSpot, drawGate, drawWall, drawGeneral, shadow } from './sprites.js';
 import { rng } from './waves.js';
 
@@ -32,7 +33,7 @@ export class BattleView {
     this.cache = null;
     this.cacheKey = '';
     this.t = 0;
-    this.water = this.terrain.deco === 'river' ? this.makeRiver() : null;
+    this.water = sim.field.water;
   }
 
   // ---- coordinates --------------------------------------------------------------------
@@ -50,24 +51,7 @@ export class BattleView {
 
   // ---- terrain ---------------------------------------------------------------------------
 
-  makeRiver() {
-    const r = rng(this.stage.id + ':river');
-    const vertical = r() < 0.5;
-    const pts = [];
-    for (let i = -1; i <= 7; i++) {
-      const t = i / 6;
-      const wob = Math.sin(t * 5 + r() * 2) * 60;
-      pts.push(vertical ? { x: 380 + r() * 440 + wob, y: -100 + t * (WORLD_H + 200) } : { x: -100 + t * (WORLD_W + 200), y: 300 + r() * 240 + wob });
-    }
-    const path = { pts, cum: [0] };
-    for (let i = 1; i < pts.length; i++) path.cum.push(path.cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
-    path.len = path.cum[path.cum.length - 1];
-    return { path, width: 70 };
-  }
-
-  inWater(x, y) {
-    return this.water && nearestOnPath(this.water.path, x, y).dist < this.water.width / 2;
-  }
+  inWater(x, y) { return inWater(this.water, x, y); }
 
   buildCache(view) {
     const key = `${view.w}x${view.h}@${view.dpr}:${this.insetR || 0}`;
@@ -106,6 +90,7 @@ export class BattleView {
     }
     if (this.water) this.paintWater(ctx);
     if (T.deco === 'castle') this.paintTiles(ctx, r);
+    this.paintPlate(ctx);
     // roads
     const roads = sim.paths;
     for (const [w, col] of [[60, T.edge], [48, T.road]]) {
@@ -203,10 +188,87 @@ export class BattleView {
     void r;
   }
 
+  // The build plate: a light brick-like tile with a stud on every cell, special ground marked.
+  paintPlate(ctx) {
+    const look = {
+      plain: { fill: 'rgba(255,250,225,0.16)' },
+      hill: { fill: 'rgba(150,110,55,0.5)' },
+      forest: { fill: 'rgba(30,80,30,0.45)' },
+      choke: { fill: 'rgba(170,70,40,0.42)' },
+    };
+    for (const cell of this.sim.field.list) {
+      const L = look[cell.kind] || look.plain;
+      const x0 = cell.c * CELL + 2, y0 = cell.r * CELL + 2, w = CELL - 4;
+      ctx.beginPath();
+      ctx.roundRect(x0, y0, w, w, 7);
+      ctx.fillStyle = L.fill;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(60,40,20,0.22)';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      if (cell.kind !== 'plain') {
+        this.groundMark(ctx, cell.kind, cell.x, cell.y);
+        continue;
+      }
+      // the stud
+      ctx.beginPath();
+      ctx.arc(cell.x, cell.y + 1.5, 7, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.12)';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cell.x, cell.y, 7, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,250,225,0.22)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  // Small drawings for special cells: a hill, two pines, sharpened stakes.
+  groundMark(ctx, kind, x, y) {
+    if (kind === 'hill') {
+      for (const [ox, h, w, col] of [[-7, 20, 15, '#8a6a3a'], [6, 15, 13, '#9c7c48']]) {
+        ctx.beginPath();
+        ctx.moveTo(x + ox - w, y + 12);
+        ctx.quadraticCurveTo(x + ox, y + 12 - h * 1.6, x + ox + w, y + 12);
+        ctx.closePath();
+        ctx.fillStyle = col;
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.moveTo(x - 12, y - 1);
+      ctx.quadraticCurveTo(x - 7, y - 9, x - 2, y - 1);
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    } else if (kind === 'forest') {
+      for (const [ox, oy, s] of [[-8, 4, 0.75], [8, 8, 0.65]]) this.pine(ctx, x + ox, y + oy + 6, s, false);
+    } else if (kind === 'choke') {
+      ctx.lineCap = 'round';
+      for (const [ox, a] of [[-10, -0.35], [0, 0], [10, 0.35]]) {
+        ctx.save();
+        ctx.translate(x + ox, y + 12);
+        ctx.rotate(a);
+        ctx.fillStyle = '#7a4a1f';
+        ctx.fillRect(-2.5, -22, 5, 22);
+        ctx.beginPath();
+        ctx.moveTo(-2.5, -22); ctx.lineTo(0, -28); ctx.lineTo(2.5, -22);
+        ctx.fillStyle = '#d9b07a';
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.fillStyle = '#5c3a1a';
+      ctx.fillRect(x - 15, y + 1, 30, 4);
+    }
+  }
+
   clearOfRoads(x, y, pad) {
     const sim = this.sim;
     for (const p of sim.paths) if (nearestOnPath(p, x, y).dist < pad) return false;
-    for (const s of sim.spots) if (Math.hypot(s.x - x, s.y - y) < 46) return false;
+    for (const [dx, dy] of [[0, 0], [0, -14], [12, 0], [-12, 0]]) {
+      if (sim.field.cells.has(cellKey(Math.floor((x + dx) / CELL), Math.floor((y + dy) / CELL)))) return false;
+    }
     const g = sim.layout.gate;
     if (Math.abs(x - g.x) < 120 && Math.abs(y - g.y) < 170) return false;
     return !this.inWater(x, y);
@@ -390,12 +452,38 @@ export class BattleView {
         case 'genMove':
           this.burst(e.x, e.y, '#ffd54f', 8);
           break;
+        case 'duel':
+          this.ring(e.x, e.y, 20, 120, '#ffd54f', 0.8);
+          this.text(e.x, e.y - 80, '일기토!', '#ffd54f', 26, DUEL.time);
+          break;
+        case 'duelWin':
+          this.ring(e.x, e.y, 10, 160, '#ffe27a', 0.8);
+          this.text(e.x, e.y - 70, `${e.gen} 승리!`, '#ffe27a', 22, 1.6);
+          this.shake = 0.4;
+          break;
+        case 'duelLose':
+          this.text(e.x, e.y - 60, `${e.gen} 패배...`, '#ffb0a0', 18, 1.4);
+          break;
+        case 'waver':
+          this.ring(e.x, e.y, 10, 250, 'rgba(255,255,255,0.8)', 0.6);
+          break;
+        case 'rout':
+          this.text(e.x, e.y - 70, `적병 ${e.n}명이 달아난다!`, '#c8ffb0', 17, 1.5);
+          break;
+        case 'formation':
+          this.text(e.x, e.y - 58, `${FORMATIONS[e.kind].name}!`, '#ffe9a0', 17, 1.3);
+          this.ring(e.x, e.y, 8, 46, '#ffe27a', 0.5);
+          break;
+        case 'ambush':
+          this.text(e.x, e.y - 56, '매복!', '#b8ff9a', 18, 1.1);
+          this.burst(e.x, e.y - 10, '#4f8a3a', 10);
+          break;
         case 'generalDown':
           this.burst(e.x, e.y - 8, '#ffd54f', 14);
-          this.text(e.x, e.y - 50, e.name + ' 후퇴! 25초 뒤 다시 배치', '#ffb0a0', 16, 1.8);
+          this.text(e.x, e.y - 50, `${e.name} 후퇴! ${Math.round(e.wait)}초 뒤 다시 배치`, '#ffb0a0', 16, 1.8);
           break;
         case 'lordDown':
-          this.text(e.x, e.y - 60, '군주가 쓰러졌다! 12초 뒤 성문에서 돌아와요', '#ff8a8a', 16, 2);
+          this.text(e.x, e.y - 60, `군주가 쓰러졌다! ${Math.round(e.wait)}초 뒤 성문에서 돌아와요`, '#ff8a8a', 16, 2);
           break;
         case 'revive':
           this.ring(e.x, e.y, 10, 60, '#fff', 0.6);
@@ -499,6 +587,26 @@ export class BattleView {
     // zones under the units
     for (const z of sim.zones) this.drawZone(ctx, z);
 
+    // while placing: the free cells light up
+    if (ui.placing) {
+      ctx.fillStyle = 'rgba(255,255,210,0.2)';
+      for (const cell of sim.field.list) {
+        if (sim.occ.has(cellKey(cell.c, cell.r))) continue;
+        ctx.fillRect(cell.c * CELL + 4, cell.r * CELL + 4, CELL - 8, CELL - 8);
+      }
+    }
+    // formation links between squads standing side by side
+    for (const l of sim.links) {
+      ctx.strokeStyle = l.kind === 'spearbow' ? 'rgba(120,200,255,0.75)' : l.kind === 'shield' ? 'rgba(230,190,120,0.75)' : l.kind === 'command' ? 'rgba(200,150,255,0.75)' : 'rgba(255,230,120,0.8)';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 5]);
+      ctx.beginPath();
+      ctx.moveTo(l.a.hx, l.a.hy);
+      ctx.lineTo(l.b.hx, l.b.hy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     // melee squads guard the place they were put: a small banner marks it
     for (const q of sim.squads) {
       if (!TROOPS[q.type].melee) continue;
@@ -526,7 +634,7 @@ export class BattleView {
     // units, back to front
     const list = [];
     for (const s of sim.squads) list.push({ y: s.y, d: () => this.drawSquadUnit(ctx, s) });
-    for (const f of sim.foes) list.push({ y: f.y, d: () => this.drawFoe(ctx, f) });
+    for (const f of sim.foes) list.push({ y: f.y, d: () => { this.drawFoe(ctx, f); if (f.state === 'flee') this.fleeMark(ctx, f.x, f.y - 38); } });
     for (const m of sim.militia) list.push({ y: m.y, d: () => this.drawMilitia(ctx, m) });
     for (const w of sim.walls) list.push({ y: w.y, d: () => { drawWall(ctx, w); this.hpBar(ctx, w.x, w.y - 32, 36, w.hp / w.maxHp, '#d8a25a'); } });
     if (!sim.lord.dead) list.push({ y: sim.lord.y, d: () => this.drawLordUnit(ctx, sim.lord, ui) });
@@ -564,12 +672,93 @@ export class BattleView {
       ctx.stroke();
     }
 
+    // 일기토: a golden ring around the two fighters, sparks where the blades meet
+    if (sim.duel) {
+      const { gen, boss } = sim.duel;
+      const mx = (gen.x + boss.x) / 2, my = (gen.y + boss.y) / 2 - 18;
+      const pulse = 1 + Math.sin(this.t * 12) * 0.08;
+      ctx.beginPath();
+      ctx.ellipse(mx, my + 18, 70 * pulse, 30 * pulse, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffd54f';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      if (Math.random() < 0.5) this.burst(mx, my, '#fff3a0', 2);
+      ctx.strokeStyle = '#f2f2f2';
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(mx - 16, my - 16); ctx.lineTo(mx + 16, my + 16);
+      ctx.moveTo(mx + 16, my - 16); ctx.lineTo(mx - 16, my + 16);
+      ctx.stroke();
+    }
+
+    this.drawWeather(ctx, sim.weather);
+
     // red flash when the gate is hit
     const flash = this.fx.find(f => f.k === 'flash');
     if (flash) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.fillStyle = `rgba(255,0,0,${0.18 * (1 - flash.t / flash.life)})`;
       ctx.fillRect(0, 0, view.w * view.dpr, view.h * view.dpr);
+    }
+  }
+
+  // A small white flag over a soldier who is running away.
+  fleeMark(ctx, x, y) {
+    ctx.strokeStyle = '#5c3a1a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x + 8, y + 10);
+    ctx.lineTo(x + 8, y - 8);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x + 8, y - 8, 10, 7);
+  }
+
+  // Rain, snow, fog, night or wind over the field.
+  drawWeather(ctx, W) {
+    const t = this.t;
+    if (W.name === '비') {
+      ctx.strokeStyle = 'rgba(190,210,255,0.5)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let i = 0; i < 90; i++) {
+        const x = ((i * 97 + t * 90) % 1320) - 60, y = ((i * 53 + t * 620) % 900) - 30;
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - 6, y + 18);
+      }
+      ctx.stroke();
+    } else if (W.name === '눈보라') {
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      for (let i = 0; i < 90; i++) {
+        const x = ((i * 131 + Math.sin(t * 1.3 + i) * 24 + t * 40) % 1240) - 20, y = ((i * 71 + t * 70) % 880) - 20;
+        ctx.beginPath();
+        ctx.arc(x, y, 1.5 + (i % 3) * 0.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (W.name === '안개') {
+      ctx.fillStyle = 'rgba(235,238,242,0.2)';
+      ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+      for (let i = 0; i < 7; i++) {
+        const x = ((i * 220 + t * 12) % 1500) - 150, y = 120 + (i * 137) % 640;
+        ctx.beginPath();
+        ctx.ellipse(x, y, 190, 60, 0, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(240,242,246,0.16)';
+        ctx.fill();
+      }
+    } else if (W.name === '밤') {
+      ctx.fillStyle = 'rgba(10,20,60,0.28)';
+      ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+    } else if (W.name === '동남풍') {
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 16; i++) {
+        const x = ((i * 173 + t * 260) % 1400) - 100, y = 100 + (i * 89) % 680;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.quadraticCurveTo(x + 30, y - 10, x + 60, y);
+        ctx.stroke();
+      }
     }
   }
 
@@ -591,6 +780,14 @@ export class BattleView {
   // Where a unit would go: see-through soldiers and the range (green = can place, red = cannot).
   drawGhost(ctx, g) {
     const ok = g.ok;
+    // the cells it takes
+    ctx.beginPath();
+    ctx.roundRect(g.c * CELL + 1, g.row * CELL + 1, g.size * CELL - 2, g.size * CELL - 2, 8);
+    ctx.fillStyle = ok ? 'rgba(120,255,140,0.3)' : 'rgba(255,80,60,0.3)';
+    ctx.fill();
+    ctx.strokeStyle = ok ? '#8cff9c' : '#ff5a46';
+    ctx.lineWidth = 3;
+    ctx.stroke();
     ctx.beginPath();
     ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2);
     ctx.fillStyle = ok ? 'rgba(120, 255, 140, 0.13)' : 'rgba(255, 80, 60, 0.13)';
@@ -612,6 +809,25 @@ export class BattleView {
       ctx.moveTo(g.x - 12, g.y - 30); ctx.lineTo(g.x + 12, g.y - 6);
       ctx.moveTo(g.x + 12, g.y - 30); ctx.lineTo(g.x - 12, g.y - 6);
       ctx.stroke();
+      return;
+    }
+    // what this spot gives: the ground and the formations it would make
+    const tags = [];
+    if (g.ground) tags.push(`${GROUND[g.ground].icon} ${GROUND[g.ground].name}`);
+    for (const f of g.forms || []) tags.push(`${FORMATIONS[f].name}!`);
+    if (tags.length) {
+      ctx.font = 'bold 17px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const s = tags.join('  ');
+      const w = ctx.measureText(s).width + 18;
+      const y = g.y - 64 * (g.size > 1 ? 1.3 : 1);
+      ctx.fillStyle = 'rgba(30,20,10,0.78)';
+      ctx.beginPath();
+      ctx.roundRect(g.x - w / 2, y - 14, w, 28, 10);
+      ctx.fill();
+      ctx.fillStyle = '#ffe9a0';
+      ctx.fillText(s, g.x, y);
     }
   }
 
@@ -707,7 +923,7 @@ export class BattleView {
   }
 
   drawFoe(ctx, f) {
-    const moving = f.state === 'walk' || f.state === 'raid' || f.state === 'return';
+    const moving = f.state === 'walk' || f.state === 'raid' || f.state === 'return' || f.state === 'flee';
     const opt = {
       face: f.face, walk: f.walkT, moving: moving && f.stunT <= 0, atk: f.atkAnim / 0.3,
       headband: this.headband, scale: (f.boss ? 1.6 : 1) * UNIT,

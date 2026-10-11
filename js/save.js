@@ -31,7 +31,7 @@ export function defaultSave(lord = null) {
     carry: { potion: 2, bomb: 1, wall: 1 },
     roster: { infantry: 3, archer: 2 },
     picks: lord ? generalsOf(LORDS[lord].faction).filter(k => GENERALS[k].unlock === 0).slice(0, GENERAL_PICKS) : [], // generals to bring
-    stages: Array.from({ length: STAGE_COUNT }, () => ({ stars: 0, clears: 0 })),
+    stages: Array.from({ length: STAGE_COUNT }, () => ({ stars: 0, clears: 0, ch: 0 })), // ch: challenge met
     progress: 0, // stages cleared at least once, in order
     seen: { prologue: false, ending: false, tutorial: false, counters: false },
     read: [], // story book chapters already opened ('prologue', 'lb01', ..., 'ending')
@@ -82,7 +82,7 @@ export function sanitize(raw) {
   s.picks = (Array.isArray(raw.picks) ? raw.picks : d.picks).filter((k, i, a) => GENERALS[k] && GENERALS[k].faction === fac && a.indexOf(k) === i).slice(0, GENERAL_PICKS);
   s.stages = Array.from({ length: STAGE_COUNT }, (_, i) => {
     const st = Array.isArray(raw.stages) ? raw.stages[i] : null;
-    return { stars: int(st?.stars, 0, 3, 0), clears: int(st?.clears, 0, 1e6, 0) };
+    return { stars: int(st?.stars, 0, 3, 0), clears: int(st?.clears, 0, 1e6, 0), ch: int(st?.ch, 0, 1, 0) };
   });
   s.progress = int(s.progress, 0, STAGE_COUNT, 0);
   s.seen = { ...d.seen, ...(raw.seen || {}) };

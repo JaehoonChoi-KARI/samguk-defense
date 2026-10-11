@@ -2,10 +2,11 @@
 // battle (deploy, promote, skills, items). Used by the "추천 편성" button, the automated
 // tests and the balance tool.
 
-import { TROOPS, TROOP_KEYS, SKILLS, counterMult, FOES, GENERALS, GENERAL_PICKS, PLACE_GAP } from './data.js';
+import { TROOPS, TROOP_KEYS, SKILLS, counterMult, FOES, GENERALS, GENERAL_PICKS, GROUND } from './data.js';
 import { lordLeadership, troopUnlocked, unlockedGenerals } from './army.js';
 import { stageSummary, waveSummary } from './waves.js';
 import { pathAt, nearestOnPaths } from './maps.js';
+import { sizeOf, footCells, footCenter } from './field.js';
 
 // How useful a troop type is against a mix of enemies (1 = even, higher = better).
 function typeScore(t, counts) {
@@ -103,39 +104,43 @@ export class Bot {
     return avail[0];
   }
 
-  // Places beside the roads the bot may use: ranged units a little way off the road, melee
-  // units close to it so their guard area covers the road. Fixed checks are done once.
-  candidates(melee) {
-    const k = melee ? 'm' : 'r';
-    this.cands = this.cands || {};
-    if (this.cands[k]) return this.cands[k];
+  // Every footprint of this size that fits on the build cells (worked out once), minus the
+  // ones taken right now: { c, r, size, keys, x, y, ground, road, frac }.
+  freeSpots(type) {
     const sim = this.sim;
-    const out = [];
-    for (const p of sim.paths) {
-      for (let d = 60; d < p.len - 60; d += 40) {
-        const q = pathAt(p, d);
-        const nx = -Math.sin(q.ang), ny = Math.cos(q.ang);
-        for (const side of [-1, 1]) {
-          const off = melee ? 50 : 80;
-          const x = q.x + nx * off * side, y = q.y + ny * off * side;
-          if (!sim.canPlace(x, y, null, false).ok) continue;
-          const near = nearestOnPaths(sim.paths, x, y);
-          out.push({ x, y, frac: near.d / sim.paths[near.path].len });
-        }
+    const size = sizeOf(type);
+    this.anchors = this.anchors || {};
+    if (!this.anchors[size]) {
+      const list = [];
+      for (const cell of sim.field.list) {
+        const keys = footCells(cell.c, cell.r, size);
+        if (keys.some(k => !sim.field.cells.has(k))) continue;
+        const p = footCenter(cell.c, cell.r, size);
+        const near = nearestOnPaths(sim.paths, p.x, p.y);
+        list.push({ c: cell.c, r: cell.r, size, keys, x: p.x, y: p.y, ground: sim.groundOf(keys), road: near.dist, frac: near.d / sim.paths[near.path].len });
       }
+      this.anchors[size] = list;
     }
-    this.cands[k] = out;
-    return out;
+    return this.anchors[size].filter(a => a.keys.every(k => !sim.occ.has(k)));
   }
 
+  // Melee units go where their guard circle covers the later road (a choke is best), ranged
+  // units where they see the most road (hills stretch that); formations are a bonus.
   pickPos(type, range) {
     const sim = this.sim;
     const melee = TROOPS[type].melee;
     let best = null, bs = -Infinity;
-    for (const c of this.candidates(melee)) {
-      if (sim.squads.some(q => Math.hypot(q.hx - c.x, q.hy - c.y) < PLACE_GAP)) continue;
-      const score = melee ? 1 - Math.abs(c.frac - 0.62) + this.coverage(c, range) * 0.002 : this.coverage(c, range);
-      if (score > bs) { bs = score; best = c; }
+    for (const a of this.freeSpots(type)) {
+      const G = GROUND[a.ground];
+      let score;
+      if (melee) {
+        if (a.road > range * 0.75) continue; // must reach the road from its post
+        score = 1 - Math.abs(a.frac - 0.62) + this.coverage(a, range) * 0.002 + (a.ground === 'choke' ? 0.3 : 0);
+      } else {
+        score = this.coverage(a, range * (1 + (G.range || 0))) * (1 + (G.atk || 0) + (a.ground === 'forest' ? 0.08 : 0));
+      }
+      score *= 1 + 0.06 * sim.previewFormations(type, a).length;
+      if (score > bs) { bs = score; best = a; }
     }
     return best;
   }

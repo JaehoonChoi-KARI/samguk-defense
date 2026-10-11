@@ -4,9 +4,10 @@
 import {
   TROOPS, TROOP_KEYS, TROOP_UNLOCK, LORDS, SKILLS, SKILL_UNLOCK, EQUIPS, equipFx,
   lordBase, leadership, troopLevelMult, startFood, ITEM_KEYS, diffOf,
-  GENERALS, GEN_SPECIALS, GENERAL_PICKS, GENERAL_HP, GENERAL_ATK, generalsOf,
+  GENERALS, GEN_SPECIALS, GENERAL_PICKS, GENERAL_HP, GENERAL_ATK, generalsOf, weatherKey, stageChallenge,
 } from './data.js';
 import { stageLayout } from './maps.js';
+import { stageField } from './field.js';
 import { talentFx, skillLevel } from './talents.js';
 import { buildWaves } from './waves.js';
 
@@ -106,9 +107,13 @@ export function battleSetup(save, stageIdx, stage, opts = {}) {
     stage,
     stageIdx,
     seed: opts.seed || 'play',
+    level: save.level,
+    weather: weatherKey(stage),
+    challenge: stageChallenge(stage, n),
     diff: diffOf(save),
     lordKey: save.lord,
     layout,
+    field: stageField(stage, layout),
     waves,
     lord: lordStats(save),
     troops,

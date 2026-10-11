@@ -2,12 +2,13 @@
 // the unit list on the right, skill and item buttons, unit menus) and all touch input.
 //
 // Placing units: pick a unit in the list on the right (or drag it out of the list), then
-// press on the map. While the finger is down a see-through unit and its range follow it;
-// letting go puts the unit there. Units go beside the road, never on it or on each other.
+// press on the map. While the finger is down a see-through unit snaps onto the build cells
+// beside the roads (like a brick on a baseplate) with its range, ground and formations;
+// letting go puts the unit there.
 
 import {
   TROOPS, TROOP_KEYS, LORDS, SKILLS, ITEMS, ITEM_KEYS, SKILL_UNLOCK, GATE_HP, FACTIONS, fmt, counterMult,
-  COUNTER_MARK, bestLevel, relations, GENERALS, GEN_SPECIALS,
+  COUNTER_MARK, bestLevel, relations, GENERALS, GEN_SPECIALS, GROUND, WEATHER, FORMATIONS,
 } from './data.js';
 import { Sim } from './sim.js';
 import { BattleView } from './render.js';
@@ -16,6 +17,24 @@ import { troopIcon, generalIcon } from './sprites.js';
 import { sfx } from './audio.js';
 import { waveSummary } from './waves.js';
 import { tapWord, dragHow } from './device.js';
+import { DUEL } from './data.js';
+
+// Was the stage's challenge met in this (won) battle?
+export function challengeMet(ch, sim) {
+  const S = sim.stats;
+  switch (ch.key) {
+    case 'gate20': return sim.gate >= 20;
+    case 'noItems': return Object.values(sim.itemsUsed).every(v => !v);
+    case 'noType': return !S.types.has(ch.type);
+    case 'duelWin': return S.duelWins > 0;
+    case 'forms3': return S.forms.size >= 3;
+    case 'bossHalf': return S.bossFrac !== null && S.bossFrac < 0.5;
+    case 'lostMax': return S.lost <= 2;
+    case 'hillForest': return S.grounds.has('hill') && S.grounds.has('forest');
+    case 'early': return S.early >= 3;
+    default: return false;
+  }
+}
 
 function h(html) {
   const t = document.createElement('template');
@@ -28,11 +47,8 @@ const SQUAD_TAP = 36;
 const DRAG_START = 12; // px a finger must move before a list press becomes a drag
 
 const PLACE_ERR = {
-  road: '길 위에는 놓을 수 없어요. 길 옆에 놓아 주세요',
-  overlap: '다른 부대와 너무 가까워요',
-  gate: '성문 바로 앞에는 놓을 수 없어요',
-  water: '물 위에는 놓을 수 없어요',
-  edge: '전장 안쪽에 놓아 주세요',
+  cell: '진지 칸 위에만 놓을 수 있어요',
+  overlap: '그 칸에는 이미 부대가 있어요',
   food: '군량🌾이 모자라요',
   roster: '남은 부대가 없어요',
   field: '이미 전장에 있어요',
@@ -46,7 +62,6 @@ export class BattleController {
     this.setup = battleSetup(game.save, stageIdx, stage, opts);
     this.sim = new Sim(this.setup);
     this.view = new BattleView(this.sim);
-    this.sim.isWater = (x, y) => this.view.inWater(x, y);
     this.us = FACTIONS[LORDS[game.save.lord].faction];
     this.ui = { squad: null, aim: null, lordDrag: null, preview: null, ghost: null };
     this.sel = null; // { kind: 'troop', type } | { kind: 'gen', key }
@@ -76,7 +91,8 @@ export class BattleController {
           <div class="pill wave">⚑ <b class="v-wave">0/${sim.totalWaves}</b></div>
         </div>
         <div class="tb-center">
-          <div class="stage-name">${this.stage.title}</div>
+          <div class="stage-name">${this.stage.title}${sim.weather !== WEATHER.clear ? ` <span class="weather" title="${sim.weather.text}">${sim.weather.icon} ${sim.weather.name}</span>` : ''}</div>
+          <div class="challenge-line">${this.setup.challenge.icon} 도전: ${this.setup.challenge.text}</div>
           <div class="boss-bar hidden"><span class="boss-name"></span><div class="bar"><i></i></div></div>
         </div>
         <div class="tb-right">
@@ -379,6 +395,8 @@ export class BattleController {
   select(sel) {
     this.sel = sel;
     this.ui.ghost = null;
+    this.ui.placing = !!sel;
+    this.el.classList.toggle('placing', !!sel);
     if (sel) {
       this.setAim(null);
       this.closePopup();
@@ -387,7 +405,7 @@ export class BattleController {
     const hint = this.$('.aim-hint');
     if (sel) {
       const name = sel.kind === 'gen' ? `⭐ ${GENERALS[sel.key].name}` : TROOPS[sel.type].name;
-      hint.querySelector('.txt').textContent = `${name}: 길 옆을 누르고 있다가 손을 떼면 놓여요`;
+      hint.querySelector('.txt').textContent = `${name}: 진지 칸을 누르고 있다가 손을 떼면 끼워져요`;
       hint.classList.remove('hidden');
     } else if (!this.ui.aim) {
       hint.classList.add('hidden');
@@ -419,12 +437,23 @@ export class BattleController {
     this.ghostAt(this.view.toWorld(sx, sy));
   }
 
+  // The see-through unit snaps to the cells it would take; the ground and any formation it
+  // would make show before letting go.
   ghostAt(w) {
     const info = this.selInfo();
     if (!info) { this.ui.ghost = null; return; }
-    let ok = this.sim.canPlace(w.x, w.y).ok;
+    const spot = this.sim.spotFor(info.type, w.x, w.y);
+    let ok = spot.ok;
     if (ok && !info.gen && this.sim.food < TROOPS[info.type].cost) ok = false;
-    this.ui.ghost = { x: w.x, y: w.y, r: info.range, type: info.type, gen: info.gen, letter: info.letter, melee: TROOPS[info.type].melee, ok };
+    const G = GROUND[spot.ground];
+    const ranged = !TROOPS[info.type].melee;
+    const r = info.range * (1 + (ranged ? G.range || 0 : 0));
+    const forms = spot.ok ? this.sim.previewFormations(info.type, spot) : [];
+    const groundOn = spot.ground !== 'plain' && (spot.ground === 'forest' || (spot.ground === 'hill') === ranged);
+    this.ui.ghost = {
+      x: spot.x, y: spot.y, r, type: info.type, gen: info.gen, letter: info.letter, melee: !ranged, ok,
+      c: spot.c, row: spot.r, size: spot.size, ground: groundOn ? spot.ground : null, forms,
+    };
   }
 
   tryPlace(w) {
@@ -639,6 +668,17 @@ export class BattleController {
     return `<div class="pop-rel"><span class="good">${R.good.map(([t, lv]) => `${COUNTER_MARK[lv]} ${name(t)}`).join(' · ')}</span><span class="bad">${R.bad.map(([t, lv]) => `${COUNTER_MARK[lv]} ${name(t)}`).join(' · ')}</span></div>`;
   }
 
+  // The ground under a squad and the formations it is in.
+  placeHtml(q) {
+    const out = [];
+    const G = GROUND[q.ground];
+    const ranged = !TROOPS[q.type].melee;
+    const works = q.ground === 'forest' || (q.ground === 'hill' && ranged) || (q.ground === 'choke' && !ranged);
+    if (q.ground !== 'plain') out.push(`<div class="pop-ground">${G.icon} <b>${G.name}</b>: ${works ? G.text : '이 병종에게는 효과가 없어요'}</div>`);
+    for (const f of q.form?.names || []) out.push(`<div class="pop-form">${FORMATIONS[f].icon} <b>${FORMATIONS[f].name}</b>: ${FORMATIONS[f].text}</div>`);
+    return out.join('');
+  }
+
   openSquad(q) {
     sfx.select();
     this.closePopup();
@@ -646,7 +686,7 @@ export class BattleController {
     this.popupKind = 'squad';
     this.ui.squad = q;
     const T = TROOPS[q.type];
-    const area = T.melee ? '<div class="pop-note">점선 원 = 이 부대가 움직이며 막는 구역</div>' : '';
+    const area = (T.melee ? '<div class="pop-note">점선 원 = 이 부대가 움직이며 막는 구역</div>' : '') + this.placeHtml(q);
     if (q.gen) {
       const G = GENERALS[q.general];
       this.popup.innerHTML = `
@@ -885,6 +925,10 @@ export class BattleController {
       totalWaves: sim.totalWaves,
       reason: sim.lostReason || null,
       time: sim.time,
+      challenge: { ...this.setup.challenge, done: sim.state === 'won' && challengeMet(this.setup.challenge, sim) },
+      duels: sim.stats.duels,
+      duelWins: sim.stats.duelWins,
+      routed: sim.stats.routed,
     };
   }
 
@@ -910,6 +954,24 @@ export class BattleController {
         case 'launch': sfx.stone(); break;
         case 'boom': if (!e.big) sfx.smash(); break;
         case 'cast': sfx.magic(); break;
+        case 'duel':
+          sfx.horn();
+          this.banner(`⚔ 일기토! ${e.gen} 대 ${e.boss}`, 'boss', DUEL.time * 1000);
+          break;
+        case 'duelWin':
+          sfx.crit();
+          this.banner(`${e.gen} 승리! ${e.boss}이(가) 흔들린다`, 'good', 2000);
+          break;
+        case 'duelLose':
+          sfx.hurt();
+          this.banner(`${e.gen}이(가) ${e.boss}에게 밀렸다...`, 'boss', 1800);
+          break;
+        case 'waver':
+          this.banner(`${e.name}이(가) 크게 다쳤다! 적병이 겁을 먹어요`, '', 1800);
+          break;
+        case 'bossFall':
+          this.banner(`적장 ${e.name}이(가) 쓰러졌다! 적이 달아난다!`, 'good', 2200);
+          break;
         case 'bossSkill':
           this.banner(`${e.name}: ${{ charge: '돌격!', summon: '지원군을 불렀다!', heal: '요술로 병사를 치료!', rally: '호령! 병사들이 강해졌다!', volley: '일제 사격!' }[e.skill]}`, 'boss', 1500);
           break;

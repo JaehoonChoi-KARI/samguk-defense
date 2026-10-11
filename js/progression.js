@@ -4,7 +4,7 @@
 import {
   stageGold, stageExp, starGold, expNeed, recLevel, REPLAY_RATE, NO_REWARD_GAP, MAX_LORD_LEVEL,
   SKILL_UNLOCK, EQUIPS, sellPrice, TROOP_KEYS, TROOP_UNLOCK, ITEM_KEYS, STAGE_COUNT, diffOf,
-  GENERALS, GENERAL_PICKS, LORDS, generalsOf,
+  GENERALS, GENERAL_PICKS, LORDS, generalsOf, challengeGold,
 } from './data.js';
 
 // Would replaying this stage give no rewards at the save's current level?
@@ -75,6 +75,11 @@ export function applyResult(save, story, r) {
   } else {
     out.gold = Math.round(stageGold(n) * REPLAY_RATE * diffOf(save).gold);
     out.exp = Math.round(stageExp(n) * REPLAY_RATE);
+  }
+  if (r.challenge?.done && !st.ch) {
+    st.ch = 1;
+    out.challenge = Math.round(challengeGold(n) * diffOf(save).gold);
+    out.gold += out.challenge;
   }
   if (r.stars > st.stars) {
     out.newStars = r.stars - st.stars;

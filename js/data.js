@@ -1,7 +1,7 @@
 // Game rules and numbers: troop types and counters, lords and skills, equipment,
 // consumable items and growth formulas. Balance knobs live here.
 
-export const VERSION = '1.0.6'; // keep in sync with CACHE in sw.js
+export const VERSION = '1.0.7'; // keep in sync with CACHE in sw.js
 export const STAGE_COUNT = 20;
 export const GATE_HP = 20;
 export const MAX_LORD_LEVEL = 30;
@@ -176,9 +176,21 @@ export const STAR_RANGE = [1, 1.07, 1.14];
 export const STAR_COST = [0.7, 1.0]; // × deploy cost, for ★2 and ★3
 export const RETREAT_REFUND = 0.5;
 
-// Free placement: how far apart units must stand, how far ranged units keep off the road.
-export const PLACE_GAP = 40;
-export const ROAD_CLEAR = 34;
+// Ground under a unit's build cells (js/field.js lays them out).
+export const GROUND = {
+  plain: { name: '평지', icon: '', text: '' },
+  hill: { name: '언덕', icon: '⛰️', text: '원거리 부대 사거리 +20%, 공격 +10%', range: 0.2, atk: 0.1 },
+  forest: { name: '숲', icon: '🌲', text: '매복: 적의 화살·돌·기습을 받지 않고, 첫 공격은 2배', ambush: 2 },
+  choke: { name: '길목', icon: '🚧', text: '근접 부대가 막는 적 +1', block: 1 },
+};
+
+// Formations: squads in cells side by side (up, down, left, right) help each other.
+export const FORMATIONS = {
+  spearbow: { name: '창궁진', icon: '🛡️', text: '창병 옆 원거리 부대는 적 기마병 기습을 받지 않아요' },
+  shield: { name: '방패진', icon: '🪵', text: '보병 옆 부대는 받는 피해 -10%', dr: 0.1 },
+  command: { name: '지휘', icon: '📜', text: '책사 옆 부대는 공격 +10%', atk: 0.1 },
+  line: { name: '일자진', icon: '➖', text: '같은 병종 3부대를 한 줄로 놓으면 체력 +15%', hp: 0.15 },
+};
 
 export const troopLevelMult = lv => 1 + 0.12 * (lv - 1);
 export const troopUpCost = lv => Math.round(80 * 1.18 ** (lv - 1)); // gold for lv → lv+1
@@ -417,6 +429,67 @@ export const BOSS_SKILLS = {
   rally: '호령: 주변 병사가 빠르고 강해져요',
   volley: '일제 사격: 우리 부대에 화살비를 내려요',
 };
+
+// 일기토: one of our generals that meets the enemy general fights it one on one, once per
+// general and battle. A win wounds and stuns the enemy general and makes enemies near it run.
+export const DUEL = { reach: 60, time: 2.4, bossDmg: 0.25, bossStun: 3, genDmg: 0.4, rout: 0.4, routR: 220 };
+export const DUEL_KINDS = { cleave: 0.12, charge: 0.12, stun: 0.1, guard: 0.08, snipe: 0.02, multishot: 0, barrage: -0.05, fire: -0.1, slow: -0.1, rally: -0.05, food: -0.12 };
+export const DUEL_DIFF = { easy: 0.1, normal: 0, hard: -0.05, hell: -0.1 };
+export function duelChance(G, level, n, diffKey) {
+  return Math.max(0.2, Math.min(0.85, 0.5 + 0.03 * (level - n) + (DUEL_KINDS[G.kind] || 0) + (DUEL_DIFF[diffKey] || 0)));
+}
+
+// Morale: when the enemy general is badly hurt some enemies near it run; when it falls, half
+// of the enemies left run away.
+export const ROUT = { waver: 0.3, waverR: 250, fall: 0.5 };
+
+// Weather of a stage, from the story where it fits.
+export const WEATHER = {
+  clear: { name: '맑음', icon: '☀️', text: '특별한 효과가 없어요' },
+  wind: { name: '동남풍', icon: '🌬️', text: '바람이 불길을 키워요: 불 공격 피해 2배 (책사·화공·불 특수 능력)', fire: 2 },
+  rain: { name: '비', icon: '🌧️', text: '비가 불을 꺼요: 불 공격 피해 절반, 모두 10% 느려져요', fire: 0.5, speed: 0.9 },
+  fog: { name: '안개', icon: '🌫️', text: '앞이 잘 안 보여요: 모든 원거리 사거리 -20%', range: 0.8 },
+  night: { name: '밤', icon: '🌙', text: '어두워요: 모든 원거리 사거리 -20%', range: 0.8 },
+  snow: { name: '눈보라', icon: '❄️', text: '눈 때문에 모두 15% 느려져요', speed: 0.85 },
+};
+const STAGE_WEATHER = {
+  lb10: 'wind', lb11: 'wind', lb13: 'wind', lb19: 'wind', cc05: 'wind', cc13: 'wind', sq03: 'wind', sq09: 'wind', sq14: 'wind',
+  lb08: 'rain', cc07: 'rain', cc18: 'rain', sq17: 'rain',
+  cc04: 'fog', sq16: 'fog', cc06: 'night', sq02: 'night',
+  cc11: 'snow', sq13: 'snow',
+};
+export const weatherKey = stage => STAGE_WEATHER[stage.id] || 'clear';
+
+// A challenge for every stage; the first time it is met it pays extra gold.
+export const CHALLENGES = {
+  gate20: { icon: '🏯', text: () => '성문을 하나도 잃지 않고 이기기' },
+  noItems: { icon: '🎒', text: () => '아이템을 쓰지 않고 이기기' },
+  noType: { icon: '🚫', text: t => `${TROOPS[t].name} 없이 이기기` },
+  duelWin: { icon: '⚔️', text: () => '일기토에서 이기기' },
+  forms3: { icon: '🧩', text: () => '진형을 3가지 이상 만들고 이기기' },
+  bossHalf: { icon: '🎯', text: () => '적장을 길 절반을 넘기 전에 쓰러뜨리기' },
+  lostMax: { icon: '🛡️', text: () => '부대를 2개 이하로 잃고 이기기' },
+  hillForest: { icon: '⛰️', text: () => '언덕과 숲에 모두 부대를 놓고 이기기' },
+  early: { icon: '⏩', text: () => '"바로 출격"을 3번 이상 쓰고 이기기' },
+};
+const CHALLENGE_ORDER = [
+  'lostMax', 'hillForest', 'forms3', 'duelWin', 'noItems', 'bossHalf', 'noType', 'gate20', 'early', 'forms3',
+  'noItems', 'duelWin', 'hillForest', 'noType', 'bossHalf', 'duelWin', 'lostMax', 'gate20', 'noType', 'forms3',
+];
+export const challengeGold = n => Math.round(stageGold(n) * 0.5);
+
+// The stage's challenge: { key, type?, text, icon }. "Without X" names the troop type that
+// beats the stage's most common enemy best; maps without woods get the gate challenge instead.
+export function stageChallenge(stage, n) {
+  let key = CHALLENGE_ORDER[(n - 1) % CHALLENGE_ORDER.length];
+  if (key === 'hillForest' && ['castle', 'desert'].includes(stage.terrain)) key = 'gate20';
+  let type;
+  if (key === 'noType') {
+    const main = Object.entries(stage.mix || { infantry: 1 }).sort((a, b) => b[1] - a[1])[0][0];
+    type = TROOP_KEYS.filter(t => TROOP_UNLOCK[t] <= n - 1).sort((a, b) => counterMult(b, main) - counterMult(a, main))[0];
+  }
+  return { key, type, icon: CHALLENGES[key].icon, text: CHALLENGES[key].text(type) };
+}
 
 // ---- small helpers ---------------------------------------------------------------
 

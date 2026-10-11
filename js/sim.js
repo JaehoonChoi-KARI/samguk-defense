@@ -5,15 +5,17 @@
 import {
   TROOPS, FOES, STAR_MULT, STAR_RANGE, STAR_COST, RETREAT_REFUND, GATE_HP, counterMult, counterLevel, BOSS,
   SKILLS, ITEMS, stageHpMult, stageAtkMult, killFood, PASSIVE_FOOD, TROOP_KEYS, diffScale,
-  GENERALS, GEN_SPECIALS, GENERAL_RECOVER, GENERAL_MOVE_WAIT, PLACE_GAP, ROAD_CLEAR,
+  GENERALS, GEN_SPECIALS, GENERAL_RECOVER, GENERAL_MOVE_WAIT, GROUND, FORMATIONS,
+  WEATHER, DUEL, duelChance, ROUT,
 } from './data.js';
 import { pathAt, nearestOnPaths, WORLD_W, WORLD_H } from './maps.js';
+import { cellKey, sizeOf, anchorAt, footCenter, footCells, footNeighbours } from './field.js';
 import { rng } from './waves.js';
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const REGEN_DELAY = 4; // seconds without being hit before resting
 const REGEN_RATE = 0.02; // of max HP per second
-const NEXT_WAVE_WAIT = 30; // seconds between one wave fully marching in and the next
+const NEXT_WAVE_WAIT = 25; // seconds between one wave fully marching in and the next
 const EARLY_BONUS = 2; // 군량 per second skipped
 const LORD_REVIVE = 12;
 const MAX_RAIDERS = 2;
@@ -31,6 +33,10 @@ export class Sim {
     this.hpMult = stageHpMult(this.n) * diffScale(D.hp, this.n);
     this.atkMult = stageAtkMult(this.n) * diffScale(D.atk, this.n);
     this.mods = setup.mods;
+    this.weather = WEATHER[setup.weather] || WEATHER.clear;
+    this.duel = null; // a 일기토 going on: { gen, boss, t, win }
+    this.duelDone = new Set(); // generals that have had their duel
+    this.wavered = false;
 
     this.state = 'ready'; // ready → play → won | lost
     this.time = 0;
@@ -40,8 +46,9 @@ export class Sim {
     this.items = { ...setup.items };
     this.itemsUsed = { potion: 0, bomb: 0, wall: 0 };
 
-    this.spots = setup.layout.spots; // good places along the roads (the bot uses them)
-    this.isWater = null; // set by the view on river maps
+    this.field = setup.field; // build cells, special ground and water
+    this.occ = new Map(); // cell key → squad standing on it
+    this.links = []; // formation links between squads, for drawing: { a, b, kind }
     this.squads = [];
     this.foes = [];
     this.militia = [];
@@ -56,7 +63,11 @@ export class Sim {
     this.waveT = 0;
     this.nextT = null; // countdown to the next wave, once the current one has fully marched in
     this.buffs = { atk: 0, atkT: 0, guard: 0, guardT: 0 };
-    this.stats = { kills: 0, lost: 0, deployed: 0, promoted: 0, skills: 0, items: 0, leaked: 0 };
+    this.stats = {
+      kills: 0, lost: 0, deployed: 0, promoted: 0, skills: 0, items: 0, leaked: 0,
+      duels: 0, duelWins: 0, routed: 0, early: 0, bossFrac: null,
+      types: new Set(), grounds: new Set(), forms: new Set(), // for the stage challenge
+    };
 
     const L = setup.lord;
     const start = pathAt(this.paths[0], Math.max(0, this.paths[0].len - 170));
@@ -116,23 +127,83 @@ export class Sim {
     if (this.state !== 'play' || this.nextT === null) return { ok: false };
     const bonus = Math.ceil(this.nextT * EARLY_BONUS);
     this.food += bonus;
+    this.stats.early++;
     this.startWave(this.waveIdx + 1);
     return { ok: true, bonus };
   }
 
-  // Where a unit may be put down: inside the field, off the road (every type: melee units walk
-  // onto the road from there), not on top of another unit, not at the gate or in water.
-  canPlace(x, y, ignore = null, units = true) {
-    if (x < 26 || x > WORLD_W - 26 || y < 74 || y > WORLD_H - 22) return { ok: false, reason: 'edge' };
-    const g = this.layout.gate;
-    if (Math.hypot(x - g.x, y - g.y) < 80) return { ok: false, reason: 'gate' };
-    if (this.isWater && this.isWater(x, y)) return { ok: false, reason: 'water' };
-    if (nearestOnPaths(this.paths, x, y).dist < ROAD_CLEAR) return { ok: false, reason: 'road' };
-    for (const q of units ? this.squads : []) {
-      if (q === ignore) continue;
-      if (Math.hypot(q.hx - x, q.hy - y) < PLACE_GAP) return { ok: false, reason: 'overlap' };
+  // Units snap onto the build cells along the roads like bricks on a baseplate. The cells a unit
+  // of this type would take for a press at (x, y): { ok, reason, c, r, size, keys, x, y, ground }.
+  spotFor(type, x, y, ignore = null) {
+    const size = sizeOf(type);
+    const a = anchorAt(x, y, size);
+    const tries = [a];
+    if (size > 1) {
+      // a big unit may sit a cell over if that is where it fits
+      for (const [dc, dr] of [[0, -1], [-1, 0], [-1, -1], [1, 0], [0, 1], [1, 1], [1, -1], [-1, 1]]) tries.push({ c: a.c + dc, r: a.r + dr });
     }
-    return { ok: true };
+    let first = null;
+    for (const { c, r } of tries) {
+      const keys = footCells(c, r, size);
+      const p = footCenter(c, r, size);
+      const out = { c, r, size, keys, x: p.x, y: p.y, ground: this.groundOf(keys) };
+      let reason = '';
+      if (keys.some(k => !this.field.cells.has(k))) reason = 'cell';
+      else if (keys.some(k => this.occ.has(k) && this.occ.get(k) !== ignore)) reason = 'overlap';
+      if (!reason) return { ...out, ok: true };
+      first = first || { ...out, ok: false, reason };
+    }
+    return first;
+  }
+
+  // A 2×2 unit counts as standing on special ground when at least half its cells are.
+  groundOf(keys) {
+    const n = {};
+    for (const k of keys) {
+      const kind = this.field.cells.get(k)?.kind || 'plain';
+      n[kind] = (n[kind] || 0) + 1;
+    }
+    for (const kind of ['hill', 'forest', 'choke']) if ((n[kind] || 0) * 2 >= keys.length) return kind;
+    return 'plain';
+  }
+
+  // Formations a unit of this type would join or make at this spot (for the placing preview).
+  previewFormations(type, spot) {
+    const near = new Set();
+    for (const k of footNeighbours(spot.c, spot.r, spot.size)) {
+      const q = this.occ.get(k);
+      if (q) near.add(q);
+    }
+    const out = new Set();
+    const ranged = !TROOPS[type].melee;
+    for (const q of near) {
+      if ((q.type === 'spear' && ranged) || (type === 'spear' && !TROOPS[q.type].melee)) out.add('spearbow');
+      if (q.type === 'infantry' || type === 'infantry') out.add('shield');
+      if (q.type === 'strategist' || type === 'strategist') out.add('command');
+    }
+    if (spot.size === 1) {
+      const same = k => { const q = this.occ.get(k); return q && q.type === type && q.anchor.size === 1; };
+      for (const [dc, dr] of [[1, 0], [0, 1]]) {
+        let n = 1;
+        for (let k = 1; same(cellKey(spot.c + dc * k, spot.r + dr * k)); k++) n++;
+        for (let k = 1; same(cellKey(spot.c - dc * k, spot.r - dr * k)); k++) n++;
+        if (n >= 3) out.add('line');
+      }
+    }
+    return [...out];
+  }
+
+  occupy(s, spot) {
+    s.cells = spot.keys;
+    s.anchor = { c: spot.c, r: spot.r, size: spot.size };
+    s.ground = spot.ground;
+    s.ambush = spot.ground === 'forest'; // the first strike from the woods
+    for (const k of spot.keys) this.occ.set(k, s);
+  }
+
+  // Forest squads at their post cannot be seen by enemy archers, catapults and raiders.
+  hidden(a) {
+    return a.kind === 'squad' && a.ground === 'forest' && Math.hypot(a.x - a.hx, a.y - a.hy) < 24;
   }
 
   newSquad(fields, x, y) {
@@ -148,29 +219,94 @@ export class Sim {
     if (!T) return { ok: false, reason: 'type' };
     if (!(this.roster[type] > 0)) return { ok: false, reason: 'roster' };
     if (this.food < TROOPS[type].cost) return { ok: false, reason: 'food' };
-    const can = this.canPlace(x, y);
-    if (!can.ok) return can;
+    const spot = this.spotFor(type, x, y);
+    if (!spot.ok) return spot;
     this.food -= TROOPS[type].cost;
     this.roster[type]--;
-    const s = this.newSquad({ type, spent: TROOPS[type].cost, hp: T.hp, maxHp: T.hp }, x, y);
+    const s = this.newSquad({ type, spent: TROOPS[type].cost, hp: T.hp }, spot.x, spot.y);
+    this.occupy(s, spot);
     this.applyStar(s);
     s.hp = s.maxHp;
     this.squads.push(s);
     this.stats.deployed++;
-    this.emit({ k: 'deploy', x, y, type });
+    this.stats.types.add(type);
+    this.stats.grounds.add(s.ground);
+    this.emit({ k: 'deploy', x: s.x, y: s.y, type });
+    this.updateFormations();
     return { ok: true, squad: s };
   }
 
   applyStar(s) {
     const T = this.setup.troops[s.type];
     const m = STAR_MULT[s.star - 1];
-    const oldMax = s.maxHp;
-    s.maxHp = T.hp * m;
-    s.atk = T.atk * m;
     s.cd = T.cd;
-    s.range = T.range * STAR_RANGE[s.star - 1];
-    s.block = T.block || 0;
-    if (oldMax) s.hp = Math.min(s.maxHp, s.hp + (s.maxHp - oldMax));
+    s.base = { maxHp: T.hp * m, atk: T.atk * m, range: T.range * STAR_RANGE[s.star - 1], block: T.block || 0 };
+    this.refreshStats(s);
+  }
+
+  // Base numbers plus the ground under the unit and its formations. Gaining max HP heals by
+  // the same amount; losing it only trims.
+  refreshStats(s) {
+    const B = s.base, G = GROUND[s.ground] || GROUND.plain, F = s.form || {};
+    const ranged = !TROOPS[s.type].melee;
+    const oldMax = s.maxHp;
+    s.maxHp = B.maxHp * (1 + (F.hp || 0));
+    s.atk = B.atk * (1 + (ranged ? G.atk || 0 : 0) + (F.atk || 0));
+    s.range = B.range * (1 + (ranged ? G.range || 0 : 0)) * (ranged ? this.weather.range || 1 : 1);
+    s.block = B.block + (ranged ? 0 : G.block || 0);
+    s.formDr = F.dr || 0;
+    s.guarded = !!F.guard;
+    if (oldMax) s.hp = s.maxHp > oldMax ? s.hp + (s.maxHp - oldMax) : Math.min(s.hp, s.maxHp);
+  }
+
+  // Squads side by side form formations (FORMATIONS in data.js).
+  updateFormations() {
+    const before = new Map(this.squads.map(s => [s, s.form?.names || []]));
+    const links = [];
+    const mark = (s, kind, q) => {
+      if (!s.form.names.includes(kind)) s.form.names.push(kind);
+      if (q && !links.some(l => l.kind === kind && ((l.a === q && l.b === s) || (l.a === s && l.b === q)))) links.push({ a: q, b: s, kind });
+    };
+    for (const s of this.squads) s.form = { names: [] };
+    for (const s of this.squads) {
+      const { c, r, size } = s.anchor;
+      const near = new Set();
+      for (const k of footNeighbours(c, r, size)) {
+        const q = this.occ.get(k);
+        if (q && q !== s) near.add(q);
+      }
+      for (const q of near) {
+        if (q.type === 'spear' && !TROOPS[s.type].melee) mark(s, 'spearbow', q);
+        if (q.type === 'infantry') mark(s, 'shield', q);
+        if (q.type === 'strategist') mark(s, 'command', q);
+      }
+    }
+    // three or more one-cell squads of one type in a row or a column
+    const same = (s, q) => q && q.type === s.type && q.anchor.size === 1;
+    for (const s of this.squads) {
+      if (s.anchor.size !== 1) continue;
+      for (const [dc, dr] of [[1, 0], [0, 1]]) {
+        if (same(s, this.occ.get(cellKey(s.anchor.c - dc, s.anchor.r - dr)))) continue; // not the start of a run
+        const run = [s];
+        for (let k = 1; same(s, this.occ.get(cellKey(s.anchor.c + dc * k, s.anchor.r + dr * k))); k++) {
+          run.push(this.occ.get(cellKey(s.anchor.c + dc * k, s.anchor.r + dr * k)));
+        }
+        if (run.length >= 3) run.forEach((q, i) => mark(q, 'line', i ? run[i - 1] : null));
+      }
+    }
+    this.links = links;
+    for (const s of this.squads) {
+      const n = s.form.names;
+      s.form.guard = n.includes('spearbow');
+      s.form.dr = n.includes('shield') ? FORMATIONS.shield.dr : 0;
+      s.form.atk = n.includes('command') ? FORMATIONS.command.atk : 0;
+      s.form.hp = n.includes('line') ? FORMATIONS.line.hp : 0;
+      this.refreshStats(s);
+      for (const kind of n) {
+        this.stats.forms.add(kind);
+        if (!(before.get(s) || []).includes(kind)) this.emit({ k: 'formation', x: s.x, y: s.y, kind });
+      }
+    }
   }
 
   // Generals cost no food; one that was picked up keeps its health.
@@ -179,19 +315,25 @@ export class Sim {
     if (!g) return { ok: false, reason: 'type' };
     if (g.state === 'field') return { ok: false, reason: 'field' };
     if (g.waitT > 0) return { ok: false, reason: 'wait' };
-    const can = this.canPlace(x, y);
-    if (!can.ok) return can;
+    const spot = this.spotFor(g.type, x, y);
+    if (!spot.ok) return spot;
     const s = this.newSquad({
-      type: g.type, general: g.key, gen: g, spent: 0,
-      hp: g.hpLeft ?? g.hp, maxHp: g.hp, atk: g.atk, cd: g.cd, range: g.range, block: g.block, dr: g.dr,
+      type: g.type, general: g.key, gen: g, spent: 0, cd: g.cd, dr: g.dr,
       specCd: (GEN_SPECIALS[g.kind].cd || 0) * (1 - (this.mods.genSpec || 0)),
-    }, x, y);
+    }, spot.x, spot.y);
     s.specT = s.specCd * 0.4;
+    s.base = { maxHp: g.hp, atk: g.atk, range: g.range, block: g.block };
+    this.occupy(s, spot);
+    this.refreshStats(s);
+    s.hp = Math.min(s.maxHp, g.hpLeft ?? s.maxHp);
     this.squads.push(s);
+    this.stats.grounds.add(s.ground);
+    this.stats.types.add(s.type);
     g.state = 'field';
     g.squad = s;
     g.hpLeft = null;
-    this.emit({ k: 'deploy', x, y, type: s.type, general: g.key });
+    this.emit({ k: 'deploy', x: s.x, y: s.y, type: s.type, general: g.key });
+    this.updateFormations();
     return { ok: true, squad: s };
   }
 
@@ -388,7 +530,7 @@ export class Sim {
       kind: 'foe', id: this.nextId++, type, boss, path: pathIdx, d,
       off: (this.r() - 0.5) * 20, x: 0, y: 0,
       hp: F.hp * this.hpMult, atk: F.atk * this.atkMult, cd: F.cd, cdT: 0.5 + this.r() * 0.5,
-      speed: F.speed * (0.93 + this.r() * 0.14), range: F.range || 0,
+      speed: F.speed * (0.93 + this.r() * 0.14), range: (F.range || 0) * (this.weather.range || 1),
       gate: F.gate, reward: killFood(type, this.n),
       state: 'walk', blocker: null, raid: null, raidCd: 0,
       slowT: 0, slow: 0, burnT: 0, burnDps: 0, stunT: 0, rallyT: 0, healT: 1 + this.r() * 2,
@@ -445,6 +587,7 @@ export class Sim {
     this.updateFoes(dt);
     this.updateBlocking();
     this.updateSquads(dt);
+    this.updateDuel(dt);
     this.updateMilitia(dt);
     this.updateWalls(dt);
     this.updateLord(dt, false);
@@ -483,7 +626,23 @@ export class Sim {
       if (f.type === 'strategist') f.healT -= dt;
       if (f.boss) this.bossSkill(f, dt);
 
-      const speed = f.speed * (1 - f.slow) * rally * (f.chargeT > 0 ? 3 : 1);
+      const speed = f.speed * (1 - f.slow) * rally * (f.chargeT > 0 ? 3 : 1) * (this.weather.speed || 1);
+      if (f.state === 'flee') {
+        // running back the way it came; gone once off the field
+        f.d -= speed * 1.15 * dt;
+        f.walkT += dt;
+        if (f.d <= 0) {
+          f.gone = true;
+          this.foes.splice(this.foes.indexOf(f), 1);
+          continue;
+        }
+        const p = pathAt(this.paths[f.path], f.d);
+        const nx = -Math.sin(p.ang), ny = Math.cos(p.ang);
+        f.x = p.x + nx * f.off;
+        f.y = p.y + ny * f.off;
+        f.face = Math.cos(p.ang) >= 0 ? -1 : 1;
+        continue;
+      }
       if (f.state === 'walk') {
         f.d += speed * dt;
         f.walkT += dt;
@@ -514,7 +673,7 @@ export class Sim {
           f.raidCd -= dt;
           if (f.raidCd <= 0) {
             f.raidCd = 0.5;
-            const t = this.squads.find(s => !TROOPS[s.type].melee && dist(s, f) < FOES.cavalry.raid &&
+            const t = this.squads.find(s => !TROOPS[s.type].melee && !s.guarded && !this.hidden(s) && dist(s, f) < FOES.cavalry.raid &&
               this.foes.filter(o => o.raid === s).length < MAX_RAIDERS);
             if (t) { f.state = 'raid'; f.raid = t; }
           }
@@ -603,6 +762,65 @@ export class Sim {
     return best;
   }
 
+  // 일기토: the first time one of our generals and the enemy general meet, they fight one on
+  // one for a moment (both stand still); the outcome is rolled when it starts.
+  updateDuel(dt) {
+    const d = this.duel;
+    if (d) {
+      d.t -= dt;
+      if (d.t > 0) return;
+      this.duel = null;
+      const { gen, boss } = d;
+      if (!this.squads.includes(gen) || !this.foes.includes(boss)) return;
+      const names = { gen: GENERALS[gen.general].name, boss: boss.name };
+      if (d.win) {
+        this.stats.duelWins++;
+        this.emit({ k: 'duelWin', x: boss.x, y: boss.y, ...names });
+        this.hitFoe(boss, boss.maxHp * DUEL.bossDmg, null);
+        if (boss.hp > 0) {
+          boss.stunT = Math.max(boss.stunT, DUEL.bossStun);
+          this.rout(boss, DUEL.rout, DUEL.routR);
+        }
+      } else {
+        this.emit({ k: 'duelLose', x: gen.x, y: gen.y, ...names });
+        this.hitAlly(gen, gen.maxHp * DUEL.genDmg, null);
+      }
+      return;
+    }
+    const boss = this.boss();
+    if (!boss || boss.hp <= 0 || boss.state === 'flee') return;
+    for (const s of this.squads) {
+      if (!s.gen || this.duelDone.has(s.general) || dist(s, boss) > DUEL.reach) continue;
+      this.duelDone.add(s.general);
+      const G = GENERALS[s.general];
+      const p = duelChance(G, this.setup.level || this.n, this.n, this.setup.diff?.key);
+      const win = this.r() < p;
+      this.duel = { gen: s, boss, t: DUEL.time, win };
+      s.duelT = DUEL.time;
+      boss.stunT = Math.max(boss.stunT, DUEL.time);
+      this.stats.duels++;
+      this.emit({ k: 'duel', x: (s.x + boss.x) / 2, y: (s.y + boss.y) / 2, gen: G.name, boss: boss.name });
+      return;
+    }
+  }
+
+  // Enemies lose heart: a share of the ones near `center` (all of them without one) run away.
+  rout(center, share, radius = Infinity) {
+    let n = 0;
+    for (const f of this.foes) {
+      if (f.boss || f.state === 'flee' || f.hp <= 0) continue;
+      if (center && dist(f, center) > radius) continue;
+      if (this.r() >= share) continue;
+      this.releaseFoe(f);
+      f.raid = null;
+      f.chargeT = 0;
+      f.state = 'flee';
+      n++;
+    }
+    this.stats.routed += n;
+    if (n) this.emit({ k: 'rout', x: center ? center.x : WORLD_W / 2, y: center ? center.y : WORLD_H / 2, n });
+  }
+
   foeHeal(f) {
     if (f.healT > 0) return false;
     const hurt = this.foes.filter(o => o !== f && o.hp < o.maxHp * 0.85 && dist(o, f) < 130);
@@ -650,7 +868,7 @@ export class Sim {
         this.emit({ k: 'bossSkill', skill: 'rally', x: f.x, y: f.y, name: f.name, r: 210 });
         break;
       case 'volley': {
-        const cands = this.allies().filter(a => a.kind !== 'wall' && dist(a, f) < 340);
+        const cands = this.allies().filter(a => a.kind !== 'wall' && !this.hidden(a) && dist(a, f) < 340);
         if (!cands.length) { f.skillT = 1.5; return; }
         const t = cands[Math.floor(this.r() * cands.length)];
         this.zones.push({ kind: 'volley', x: t.x, y: t.y, r: 85, t: 1.1, dmg: f.atk * 1.6, att: 'archer', warn: true });
@@ -814,6 +1032,7 @@ export class Sim {
   updateSquads(dt) {
     for (const s of this.squads.slice()) {
       s.atkAnim = Math.max(0, s.atkAnim - dt);
+      if (s.duelT > 0) { s.duelT -= dt; continue; } // in a 일기토
       this.regen(s, dt);
       if (TROOPS[s.type].melee) this.moveMelee(s, dt);
       if (s.gen) {
@@ -823,7 +1042,12 @@ export class Sim {
       s.cdT -= dt;
       if (s.cdT > 0) continue;
       const T = TROOPS[s.type];
-      const atk = s.atk * this.troopAtkMult(s);
+      let atk = s.atk * this.troopAtkMult(s);
+      if (s.ambush) {
+        atk *= GROUND.forest.ambush;
+        s.ambush = false;
+        this.emit({ k: 'ambush', x: s.x, y: s.y });
+      }
       const multi = s.gen && s.gen.kind === 'multishot' ? GEN_SPECIALS.multishot.targets : 1;
       let t = null;
       if (T.melee) {
@@ -891,7 +1115,7 @@ export class Sim {
     const dx = goal.x - s.x, dy = goal.y - s.y;
     const d = Math.hypot(dx, dy);
     if (d > stop + 0.5) {
-      const step = Math.min(d - stop, T.speed * dt);
+      const step = Math.min(d - stop, T.speed * (this.weather.speed || 1) * dt);
       let nx = s.x + dx / d * step, ny = s.y + dy / d * step;
       const hx = nx - s.hx, hy = ny - s.hy, hd = Math.hypot(hx, hy);
       if (hd > leash) { nx = s.hx + hx / hd * leash; ny = s.hy + hy / hd * leash; }
@@ -970,7 +1194,7 @@ export class Sim {
     const dx = goal.x - L.x, dy = goal.y - L.y;
     const d = Math.hypot(dx, dy);
     const stopAt = L.engage && goal === L.engage ? 20 : 2;
-    const speed = L.speed;
+    const speed = L.speed * (this.weather.speed || 1);
     if (d > stopAt + 0.5) {
       const step = Math.min(d - stopAt, speed * dt);
       L.x += dx / d * step;
@@ -1008,6 +1232,7 @@ export class Sim {
   nearestAlly(f, range) {
     let best = null, bd = range;
     for (const a of this.allies()) {
+      if (this.hidden(a)) continue;
       const d = dist(a, f);
       if (d < bd) { bd = d; best = a; }
     }
@@ -1051,7 +1276,7 @@ export class Sim {
         if (!alive) continue;
         if (p.side === 'p') {
           if (p.kind === 'fire') {
-            this.splash(p, p.tx, p.ty);
+            this.splash({ ...p, dmg: p.dmg * (this.weather.fire || 1) }, p.tx, p.ty);
             this.emit({ k: 'fireHit', x: p.tx, y: p.ty, r: p.splash });
           } else {
             this.hitFoe(p.target, p.dmg, p.att);
@@ -1101,9 +1326,10 @@ export class Sim {
       z.tick -= dt;
       if (z.tick <= 0) {
         z.tick += z.every;
+        const dmg = z.kind === 'fire' ? z.dmg * (this.weather.fire || 1) : z.dmg;
         for (const f of this.foes.slice()) {
           if (Math.hypot(f.x - z.x, f.y - z.y) > z.r) continue;
-          this.hitFoe(f, z.dmg, null);
+          this.hitFoe(f, dmg, null);
           if (z.slow && f.hp > 0) { f.slow = Math.max(f.slow, z.slow); f.slowT = 0.7; }
         }
         if (z.kind === 'rain') this.emit({ k: 'rainHit', x: z.x, y: z.y, r: z.r });
@@ -1126,6 +1352,12 @@ export class Sim {
     }
     if (src && src.kind === 'lord' && f.boss) this.emit({ k: 'hitBoss' });
     if (f.hp <= 0) this.killFoe(f);
+    else if (f.boss && !this.wavered && f.hp < f.maxHp * 0.5) {
+      // the enemy general is badly hurt: some of the soldiers near it lose heart
+      this.wavered = true;
+      this.emit({ k: 'waver', x: f.x, y: f.y, name: f.name });
+      this.rout(f, ROUT.waver, ROUT.waverR);
+    }
     return v;
   }
 
@@ -1139,6 +1371,11 @@ export class Sim {
     this.food += food;
     this.stats.kills++;
     this.emit({ k: 'die', x: f.x, y: f.y, type: f.type, boss: f.boss, food: Math.round(food), faction: this.setup.stage.enemy });
+    if (f.boss) {
+      this.stats.bossFrac = f.d / this.paths[f.path].len;
+      this.emit({ k: 'bossFall', x: f.x, y: f.y, name: f.name });
+      this.rout(null, ROUT.fall);
+    }
   }
 
   leak(f) {
@@ -1175,6 +1412,7 @@ export class Sim {
     let v = dmg * counterMult(att, a.type);
     if (a.kind === 'lord') v *= 1 - (a.def || 0);
     if (a.dr) v *= 1 - a.dr;
+    if (a.formDr) v *= 1 - a.formDr;
     if (a.kind !== 'wall') v *= 1 - this.buffs.guard;
     a.hp -= v;
     a.lastHit = this.time;
@@ -1185,7 +1423,7 @@ export class Sim {
       a.hp = 0;
       a.engage = null;
       a.reviveT = this.mods.lordRevive ? LORD_REVIVE / 2 : LORD_REVIVE;
-      this.emit({ k: 'lordDown', x: a.x, y: a.y });
+      this.emit({ k: 'lordDown', x: a.x, y: a.y, wait: a.reviveT });
     } else if (a.kind === 'squad' && a.gen) {
       const g = a.gen;
       g.state = 'hand';
@@ -1194,7 +1432,7 @@ export class Sim {
       g.squad = null;
       this.stats.genDown = (this.stats.genDown || 0) + 1;
       this.removeSquad(a);
-      this.emit({ k: 'generalDown', x: a.x, y: a.y, name: GENERALS[g.key].name });
+      this.emit({ k: 'generalDown', x: a.x, y: a.y, name: GENERALS[g.key].name, wait: g.waitT });
     } else if (a.kind === 'squad') {
       this.stats.lost++;
       this.removeSquad(a);
@@ -1216,6 +1454,8 @@ export class Sim {
     this.releaseAll(s);
     const i = this.squads.indexOf(s);
     if (i >= 0) this.squads.splice(i, 1);
+    for (const k of s.cells || []) if (this.occ.get(k) === s) this.occ.delete(k);
+    this.updateFormations();
     for (const f of this.foes) if (f.raid === s && !f.boss) { f.raid = null; f.state = 'return'; }
   }
 

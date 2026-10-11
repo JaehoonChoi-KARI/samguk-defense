@@ -6,7 +6,7 @@ import {
   ITEMS, ITEM_KEYS, ITEM_CARRY_MAX, FACTIONS, TROOP_UNLOCK, BOSS_SKILLS, MAX_TROOP_LEVEL, MAX_ENHANCE,
   STAGE_COUNT, troopUpCost, enhanceCost, equipFx, fxText, expNeed, recLevel, stageGold, fmt, weakTo, pct,
   DIFFS, diffOf, GENERALS, GEN_SPECIALS, GENERAL_PICKS, COUNTER_MARK, COUNTER_NAME, COUNTER_MULT, relations, bestLevel, RING,
-  generalsOf,
+  generalsOf, WEATHER, weatherKey, stageChallenge, challengeGold, GROUND, FORMATIONS,
 } from './data.js';
 import { PLACES } from './maps.js';
 import { STORIES } from './stories.js';
@@ -18,6 +18,7 @@ import {
 import { lordStats, troopStats, lordLeadership, rosterLead, troopUnlocked, skillList, fitRoster, unlockedGenerals, pickedGenerals, generalStats, generalUnlocked } from './army.js';
 import { buildWaves, stageSummary } from './waves.js';
 import { stageLayout } from './maps.js';
+import { stageField } from './field.js';
 import { noReward } from './progression.js';
 import { troopIcon, lordIcon, generalIcon } from './sprites.js';
 import { drawChinaMap, mapFit } from './chinamap.js';
@@ -450,6 +451,9 @@ function prepScreen(game, { stageIdx }) {
   const top = foeTypes.slice(0, 2);
   s.roster = fitRoster(s, s.roster);
   const rec = recLevel(n);
+  const weather = WEATHER[weatherKey(st)];
+  const field = stageField(st, layoutN);
+  const ch = stageChallenge(st, n);
 
   const el = h(`
     <div class="screen prep">
@@ -477,6 +481,11 @@ function prepScreen(game, { stageIdx }) {
             </div>
           </div>
           <div class="lvl-note ${s.level < rec ? 'warn' : ''}">권장 군주 레벨 ${rec} · 지금 Lv ${s.level}${noReward(s, stageIdx) ? ' · 💤 보상 없음' : ''}</div>
+          <div class="field-note">
+            <div><b>${weather.icon} ${weather.name}</b>${weather !== WEATHER.clear ? ` <small>${weather.text}</small>` : ''}</div>
+            <div>진지 칸 ${field.list.length} · ⛰️ 언덕 ${field.counts.hill} · 🌲 숲 ${field.counts.forest} · 🚧 길목 ${field.counts.choke}</div>
+          </div>
+          <div class="challenge ${s.stages[stageIdx].ch ? 'done' : ''}">${ch.icon} 도전: ${ch.text} ${s.stages[stageIdx].ch ? '✅' : `<small>첫 성공 +${fmt(challengeGold(n) * diffOf(s).gold)}💰</small>`}</div>
         </section>
         <section class="pc army-col">
           <div class="pc-h">⚔ 병력 편성 <button class="mini auto" type="button">✨ 추천 편성</button></div>
@@ -943,6 +952,22 @@ function countersScreen(game, arg = {}) {
           </div>`).join('')}
       </div>
       <p class="ct-tip">💡 정찰 보고에서 적 병종을 보고, 그 적에게 ▲인 부대를 데려가세요!</p>
+      <h2 class="center-title">🗺️ 전장 안내</h2>
+      <div class="guide-grid">
+        <div class="ct"><div class="ct-head">🧱 <b>진지 칸과 지형</b></div>
+          <p>부대는 길 옆 진지 칸에 블록처럼 끼워요. 투석기는 2×2칸을 차지해요.</p>
+          ${['hill', 'forest', 'choke'].map(k => `<div class="g-line">${GROUND[k].icon} <b>${GROUND[k].name}</b> <small>${GROUND[k].text}</small></div>`).join('')}
+        </div>
+        <div class="ct"><div class="ct-head">🧩 <b>진형</b> <small>옆 칸에 붙여 놓기</small></div>
+          ${Object.values(FORMATIONS).map(f => `<div class="g-line">${f.icon} <b>${f.name}</b> <small>${f.text}</small></div>`).join('')}
+        </div>
+        <div class="ct"><div class="ct-head">⚔ <b>일기토 · 사기 · 날씨</b></div>
+          <div class="g-line">⚔ <b>일기토</b> <small>우리 장수가 적장 바로 옆에 가면 한 번 맞붙어요. 이기면 적장이 크게 다치고 기절해요</small></div>
+          <div class="g-line">🏳️ <b>사기</b> <small>적장이 크게 다치거나 쓰러지면 적병이 겁먹고 달아나요</small></div>
+          <div class="g-line">🌬️ <b>날씨</b> <small>동남풍은 불이 2배, 비는 불이 약해져요. 안개와 밤은 사거리가 줄어요</small></div>
+          <div class="g-line">🎯 <b>도전 과제</b> <small>지역마다 하나씩, 처음 해내면 골드를 더 받아요</small></div>
+        </div>
+      </div>
     </div>`);
   el.querySelector('.back-btn').addEventListener('click', () => { sfx.select(); goBack(game, arg); });
   if (s) { s.seen.counters = true; }
@@ -965,6 +990,13 @@ function resultScreen(game, { r, out }) {
     lines.push(`<div class="rw big">✨ 새 스킬: ${SKILLS[key].icon} ${SKILLS[key].name}</div>`);
   }
   if (out.first) lines.push(`<div class="rw big">📜 새 이야기가 열렸어요: <b>제${r.stageIdx + 1}장 · ${st.title}</b> <small>이야기책에서 자세히 읽을 수 있어요</small></div>`);
+  if (r.challenge) {
+    const c = r.challenge;
+    if (out.challenge) lines.push(`<div class="rw big">${c.icon} 도전 성공! <b>${c.text}</b> <small>+${fmt(out.challenge)}💰</small></div>`);
+    else if (c.done) lines.push(`<div class="rw">${c.icon} 도전 과제를 또 해냈어요: ${c.text}</div>`);
+    else if (r.won) lines.push(`<div class="rw">${c.icon} 도전: ${c.text} <small>(다음에 해 봐요)</small></div>`);
+  }
+  if (r.duels) lines.push(`<div class="rw">⚔ 일기토 ${r.duels}번 중 ${r.duelWins}번 승리${r.routed ? ` · 달아난 적병 ${r.routed}명` : ''}</div>`);
   if (out.item) lines.push(`<div class="rw big">🎁 ${EQUIPS[out.item].icon} ${gradeName(out.item)} ${out.itemDup ? '<small>(이미 있어서 골드로 받았어요)</small>' : '획득! <small>장비에서 장착하세요</small>'}</div>`);
   for (const k of out.newGenerals || []) lines.push(`<div class="rw big"><img class="ticon" src="${generalIcon(GENERALS[k].type, GENERALS[k].letter, us(s), 48)}" alt=""> 새 장수 합류: <b>${GENERALS[k].name}</b>! <small>${GENERALS[k].skill} · 정비에서 데려갈 수 있어요</small></div>`);
   for (const t of out.unlocked) lines.push(`<div class="rw big">${troopImg(s, t, 40)} 새 병종: <b>${TROOPS[t].name}</b>! <small>병영과 정비에서 쓸 수 있어요</small></div>`);

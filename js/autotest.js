@@ -4,8 +4,9 @@
 // Scenes: title, slots, lord, story, base, map, prep, battle, boss, result, barracks, lordinfo, equip, counters
 
 import { STORIES } from './stories.js';
-import { TROOP_KEYS, LORD_KEYS, EQUIPS, FACTIONS, STAGE_COUNT, BOSS_SKILLS, TROOP_UNLOCK, GENERALS } from './data.js';
+import { TROOP_KEYS, LORD_KEYS, EQUIPS, FACTIONS, STAGE_COUNT, BOSS_SKILLS, TROOP_UNLOCK, GENERALS, CHALLENGES, stageChallenge } from './data.js';
 import { PLACES, stageLayout, pathAt } from './maps.js';
+import { stageField, cellKey, CELL } from './field.js';
 import { buildWaves } from './waves.js';
 import { battleSetup, troopStats, skillList, lordLeadership } from './army.js';
 import { TALENT_KEYS, TALENTS, addBlock, addTalent, canRemove, removeTalent, freePoints, autoTalents, talentText } from './talents.js';
@@ -64,7 +65,8 @@ function dataChecks() {
       if (!BOSS_SKILLS[s.boss.skill]) fail(`${s.id}: bad boss skill`);
       for (const t of Object.keys(s.mix)) if (!TROOP_KEYS.includes(t)) fail(`${s.id}: bad mix ${t}`);
       const L = stageLayout(n);
-      if (L.spots.length < 8) fail(`stage ${n}: only ${L.spots.length} spots`);
+      const F = stageField(s, L);
+      if (F.list.length < 50) fail(`${s.id}: only ${F.list.length} build cells`);
       const w = buildWaves(s, n, L.paths.length);
       if (!w.length || !w[w.length - 1].boss) fail(`${s.id}: waves`);
     });
@@ -73,8 +75,8 @@ function dataChecks() {
     const starters = Object.values(GENERALS).filter(g => g.faction === fac && g.unlock === 0).length;
     if (starters < 2) fail(`${fac}: only ${starters} starting generals`);
   }
-  const spots = Array.from({ length: STAGE_COUNT }, (_, i) => stageLayout(i + 1).spots.length);
-  out.checks.push({ spotsPerStage: spots.join(',') });
+  const cells = STORIES.liubei.stages.map((s, i) => stageField(s, stageLayout(i + 1)));
+  out.checks.push({ cellsPerStage: cells.map(f => f.list.length).join(','), special: cells.map(f => `${f.counts.hill}/${f.counts.forest}/${f.counts.choke}`).join(' ') });
   // the first stage only needs troops that are unlocked from the start
   out.checks.push({ unlock: TROOP_UNLOCK });
 }
@@ -136,6 +138,105 @@ function botBattles() {
     }
     if (!sq || !engaged) fail(`boss engage: squad ${!!sq} engaged ${engaged} state ${boss.state}`);
     out.checks.push({ bossEngage: engaged });
+  }
+  // the build plate: cells, ground and formations
+  {
+    const s = expectedSave('liubei', 12, 1);
+    const st = STORIES.liubei.stages[11];
+    const sim = new Sim(battleSetup(s, 11, st, { seed: 'plate' }));
+    sim.food = 9999;
+    for (const t of ['infantry', 'spear', 'archer', 'strategist', 'catapult']) sim.roster[t] = 9;
+    const F = sim.field;
+    const at = (c, r) => ({ x: (c + 0.5) * CELL, y: (r + 0.5) * CELL });
+    const plain = (c, r) => F.cells.get(cellKey(c, r))?.kind === 'plain';
+    // three plain cells in a row with a plain cell under the middle one
+    const row = F.list.find(x => plain(x.c, x.r) && plain(x.c + 1, x.r) && plain(x.c + 2, x.r) && plain(x.c + 1, x.r + 1));
+    if (!row) fail('plate: no row of plain cells');
+    else {
+      const a1 = sim.deploy('archer', at(row.c, row.r).x, at(row.c, row.r).y).squad;
+      const a2 = sim.deploy('archer', at(row.c + 1, row.r).x, at(row.c + 1, row.r).y).squad;
+      const preview = sim.previewFormations('archer', sim.spotFor('archer', at(row.c + 2, row.r).x, at(row.c + 2, row.r).y));
+      if (!preview.includes('line')) fail(`plate: line preview ${preview}`);
+      const a3 = sim.deploy('archer', at(row.c + 2, row.r).x, at(row.c + 2, row.r).y).squad;
+      if (!a1 || !a2 || !a3 || !a2.form.names.includes('line') || !(a2.maxHp > a2.base.maxHp)) fail('plate: 일자진');
+      if (sim.deploy('spear', at(row.c + 1, row.r).x, at(row.c + 1, row.r).y).ok) fail('plate: two units on one cell');
+      const sp = sim.deploy('spear', at(row.c + 1, row.r + 1).x, at(row.c + 1, row.r + 1).y).squad;
+      if (!sp || !a2.guarded || !sim.links.some(l => l.kind === 'spearbow')) fail('plate: 창궁진');
+      sim.retreat(sp.id);
+      if (a2.guarded) fail('plate: formation stays after the spear left');
+    }
+    const offCell = pathAt(sim.paths[0], sim.paths[0].len * 0.5);
+    if (sim.deploy('infantry', offCell.x, offCell.y).ok) fail('plate: placed on the road');
+    // a catapult takes 2×2 cells
+    const big = F.list.find(x => [[0, 0], [1, 0], [0, 1], [1, 1]].every(([i, j]) => F.cells.has(cellKey(x.c + i, x.r + j)) && !sim.occ.has(cellKey(x.c + i, x.r + j))));
+    const cat = big && sim.deploy('catapult', (big.c + 1) * CELL, (big.r + 1) * CELL).squad;
+    if (!cat || cat.cells.length !== 4) fail('plate: catapult footprint');
+    // ground: hill stretches range, forest hides, choke blocks more
+    const hill = F.list.find(x => x.kind === 'hill' && !sim.occ.has(cellKey(x.c, x.r)));
+    const h = hill && sim.deploy('archer', hill.x, hill.y).squad;
+    if (h && !(h.range > h.base.range * 1.15)) fail('plate: hill range');
+    const wood = F.list.find(x => x.kind === 'forest' && !sim.occ.has(cellKey(x.c, x.r)));
+    const w = wood && sim.deploy('archer', wood.x, wood.y).squad;
+    if (w && (!sim.hidden(w) || !w.ambush)) fail('plate: forest');
+    const choke = F.list.find(x => x.kind === 'choke' && !sim.occ.has(cellKey(x.c, x.r)));
+    const ch = choke && sim.deploy('infantry', choke.x, choke.y).squad;
+    if (ch && ch.block !== ch.base.block + 1) fail('plate: choke');
+    out.checks.push({ plate: { cells: F.list.length, ground: F.counts, squads: sim.squads.length, links: sim.links.length } });
+  }
+  // 일기토 and morale: a general beside the enemy general duels once; a fallen general sends
+  // its soldiers running
+  {
+    const s = expectedSave('liubei', 4, 1);
+    const st = STORIES.liubei.stages[3];
+    const sim = new Sim(battleSetup(s, 3, st, { seed: 'duel' }));
+    sim.start();
+    const boss = sim.spawnFoe(st.boss.type, 0, true, sim.paths[0].len * 0.5);
+    for (let i = 0; i < 6; i++) sim.spawnFoe('infantry', 0, false, sim.paths[0].len * 0.45 + i * 8);
+    const g = sim.generals[0];
+    const spot = sim.field.list.filter(c => !sim.occ.has(cellKey(c.c, c.r))).sort((a, b) => Math.hypot(a.x - boss.x, a.y - boss.y) - Math.hypot(b.x - boss.x, b.y - boss.y))[0];
+    sim.deployGeneral(g.key, spot.x, spot.y);
+    const gen = g.squad;
+    let started = false, ended = false;
+    for (let i = 0; i < 30 * 8 && !ended; i++) {
+      gen.x = boss.x + 20; gen.y = boss.y; // keep them together
+      sim.update(1 / 30);
+      for (const e of sim.events) { if (e.k === 'duel') started = true; if (e.k === 'duelWin' || e.k === 'duelLose') ended = true; }
+      sim.events.length = 0;
+    }
+    if (!started || !ended || sim.stats.duels !== 1) fail(`duel: started ${started} ended ${ended} duels ${sim.stats.duels}`);
+    const left = sim.foes.filter(f => !f.boss && f.state !== 'flee').length;
+    sim.killFoe(boss);
+    const fled = sim.foes.filter(f => f.state === 'flee').length;
+    if (!fled && left) fail('rout: nobody ran when the enemy general fell');
+    out.checks.push({ duel: { win: sim.stats.duelWins, routed: sim.stats.routed } });
+  }
+  // weather: the south-east wind doubles fire, fog shortens bows; every stage has a challenge
+  {
+    const fireStage = STORIES.liubei.stages[12]; // 적벽대전
+    const s = expectedSave('liubei', 13, 1);
+    const sim = new Sim(battleSetup(s, 12, fireStage, { seed: 'wind' }));
+    if (sim.weather.fire !== 2) fail('weather: 적벽 should have the south-east wind');
+    const fogStage = STORIES.caocao.stages[3];
+    const fog = new Sim(battleSetup(expectedSave('caocao', 4, 1), 3, fogStage, { seed: 'fog' }));
+    fog.food = 999;
+    fog.roster.archer = 2;
+    const free = fog.field.list.find(c => c.kind === 'plain');
+    const a = fog.deploy('archer', free.x, free.y).squad;
+    if (!a || !(a.range < a.base.range)) fail('weather: fog range');
+    for (const lord of LORD_KEYS) {
+      STORIES[lord].stages.forEach((st, i) => {
+        const ch = stageChallenge(st, i + 1);
+        if (!CHALLENGES[ch.key] || !ch.text) fail(`challenge ${st.id}`);
+        if (ch.key === 'noType' && !(TROOP_UNLOCK[ch.type] <= i)) fail(`challenge ${st.id}: ${ch.type} not unlocked yet`);
+      });
+    }
+    // meeting a challenge pays once
+    const sv = defaultSave('liubei');
+    const ch = stageChallenge(STORIES.liubei.stages[0], 1);
+    const r1 = applyResult(sv, STORIES.liubei, { stageIdx: 0, won: true, stars: 3, gate: 20, kills: 10, itemsUsed: {}, challenge: { ...ch, done: true } });
+    const r2 = applyResult(sv, STORIES.liubei, { stageIdx: 0, won: true, stars: 3, gate: 20, kills: 10, itemsUsed: {}, challenge: { ...ch, done: true } });
+    if (!r1.challenge || r2.challenge || !sv.stages[0].ch) fail('challenge reward');
+    out.checks.push({ weather: { wind: sim.weather.name, fog: a && Math.round(a.range) }, challengeGold: r1.challenge });
   }
   // talents: rows open with points above, skills need the lord level, points come back out
   {
@@ -420,6 +521,7 @@ async function shot(game, name, params) {
       guard++;
     }
     if (params.has('place') || params.has('menu')) {
+      b.sim.food = Math.max(b.sim.food, 500);
       const ty = Object.keys(b.setup.roster).find(k => b.sim.roster[k] > 0) || 'infantry';
       b.select({ kind: 'troop', type: ty });
       const pos = bot.pickPos(ty, b.setup.troops[ty].range);
