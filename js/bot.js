@@ -2,7 +2,7 @@
 // battle (deploy, promote, skills, items). Used by the "추천 편성" button, the automated
 // tests and the balance tool.
 
-import { TROOPS, TROOP_KEYS, SKILLS, counterMult, FOES, GENERALS, GENERAL_PICKS, GROUND, HORDE, GATE_HP } from './data.js';
+import { TROOPS, TROOP_KEYS, SKILLS, counterMult, FOES, GENERALS, GENERAL_PICKS, GROUND, HORDE, GATE_HP, holdsRoad } from './data.js';
 import { lordLeadership, troopUnlocked, unlockedGenerals } from './army.js';
 import { stageSummary, waveSummary, rng } from './waves.js';
 import { pathAt, nearestOnPath, nearestOnPaths } from './maps.js';
@@ -29,7 +29,7 @@ export function recommendRoster(save, waves) {
   const score = t => typeScore(t, counts) * (TROOPS[t].melee ? 1 : 1.05) / Math.sqrt(TROOPS[t].lead / 2) * 0.88 ** (roster[t] || 0);
   const add = t => { roster[t] = (roster[t] || 0) + 1; room -= TROOPS[t].lead; };
   // a couple of squads that can block the road come first
-  const melee = types.filter(t => TROOPS[t].melee).sort((a, b) => score(b) - score(a));
+  const melee = types.filter(holdsRoad).sort((a, b) => score(b) - score(a));
   const meleeWanted = Math.max(2, Math.round(room0 / 2 / 2 * 0.4));
   for (let i = 0; i < meleeWanted && melee.length; i++) {
     const t = melee.slice().sort((a, b) => score(b) - score(a))[0];
@@ -100,10 +100,10 @@ export class Bot {
     const counts = this.threats();
     const avail = TROOP_KEYS.filter(t => sim.roster[t] > 0 && sim.food >= TROOPS[t].cost);
     if (!avail.length) return null;
-    const meleeOut = sim.squads.filter(s => TROOPS[s.type].melee).length;
+    const meleeOut = sim.squads.filter(s => holdsRoad(s.type)).length; // squads that stop enemies
     const rangedOut = sim.squads.length - meleeOut;
     avail.sort((a, b) => {
-      const need = t => (TROOPS[t].melee ? (meleeOut < 2 ? 0.6 : meleeOut > rangedOut ? -0.2 : 0) : (rangedOut < meleeOut ? 0.15 : 0));
+      const need = t => (holdsRoad(t) ? (meleeOut < 2 ? 0.6 : meleeOut > rangedOut ? -0.2 : 0) : (rangedOut < meleeOut ? 0.15 : 0));
       return typeScore(b, counts) + need(b) - (typeScore(a, counts) + need(a));
     });
     return avail[0];

@@ -8,7 +8,7 @@
 
 import {
   TROOPS, TROOP_KEYS, LORDS, SKILLS, ITEMS, ITEM_KEYS, SKILL_UNLOCK, GATE_HP, FACTIONS, fmt, counterMult,
-  COUNTER_MARK, bestLevel, relations, GENERALS, GEN_SPECIALS, GROUND, WEATHER, FORMATIONS,
+  COUNTER_MARK, bestLevel, relations, GENERALS, GEN_SPECIALS, GROUND, WEATHER, FORMATIONS, holdsRoad,
 } from './data.js';
 import { Sim } from './sim.js';
 import { BattleView } from './render.js';
@@ -433,7 +433,7 @@ export class BattleController {
     const ranged = !TROOPS[info.type].melee;
     const r = info.range * (1 + (ranged ? G.range || 0 : 0));
     const forms = spot.ok ? this.sim.previewFormations(info.type, spot) : [];
-    const groundOn = spot.ground !== 'plain' && (spot.ground === 'forest' || (spot.ground === 'hill') === ranged);
+    const groundOn = spot.ground === 'forest' || (spot.ground === 'hill' && ranged) || (spot.ground === 'choke' && holdsRoad(info.type));
     this.ui.ghost = {
       x: spot.x, y: spot.y, r, type: info.type, gen: info.gen, letter: info.letter, melee: !ranged, ok,
       c: spot.c, row: spot.r, size: spot.size, ground: groundOn ? spot.ground : null, forms,
@@ -630,7 +630,7 @@ export class BattleController {
     const out = [];
     const G = GROUND[q.ground];
     const ranged = !TROOPS[q.type].melee;
-    const works = q.ground === 'forest' || (q.ground === 'hill' && ranged) || (q.ground === 'choke' && !ranged);
+    const works = q.ground === 'forest' || (q.ground === 'hill' && ranged) || (q.ground === 'choke' && holdsRoad(q.type));
     if (q.ground !== 'plain') out.push(`<div class="pop-ground">${G.icon} <b>${G.name}</b>: ${works ? G.text : '이 병종에게는 효과가 없어요'}</div>`);
     for (const f of q.form?.names || []) out.push(`<div class="pop-form">${FORMATIONS[f].icon} <b>${FORMATIONS[f].name}</b>: ${FORMATIONS[f].text}</div>`);
     if (this.sim.mods.aura && this.sim.nearLord(q)) out.push(`<div class="pop-form">🏯 <b>군주의 위엄</b>: 성 가까이 있어서 공격 +${Math.round(this.sim.mods.aura * 100)}%</div>`);
@@ -644,21 +644,22 @@ export class BattleController {
     this.popupKind = 'squad';
     this.ui.squad = q;
     const T = TROOPS[q.type];
-    const area = (T.melee ? '<div class="pop-note">점선 원 = 이 부대가 움직이며 막는 구역</div>' : '') + this.placeHtml(q);
+    const trait = T.trait ? `<div class="pop-skill">${T.trait.icon} <b>${T.trait.name}</b>: ${T.trait.text}</div>` : '';
+    const area = (T.melee ? `<div class="pop-note">점선 원 = 이 부대가 ${holdsRoad(q.type) ? '움직이며 막는' : '달리며 휩쓰는'} 구역</div>` : '') + this.placeHtml(q);
     if (q.gen) {
       const G = GENERALS[q.general];
       this.popup.innerHTML = `
         <div class="pop-title"><img src="${generalIcon(q.type, G.letter, this.us, 48)}" alt=""> ${G.name} <small>${T.name} 장수</small></div>
         <div class="pop-hp"><div class="bar"><i style="width:${(q.hp / q.maxHp) * 100}%"></i></div></div>
         <div class="pop-skill">✨ <b>${G.skill}</b>: ${GEN_SPECIALS[G.kind].text}</div>
-        ${this.relHtml(q.type)}${area}
+        ${trait}${this.relHtml(q.type)}${area}
         <div class="pop-btns"><button class="pbtn retreat" type="button">↩ 다른 자리로 옮기기</button></div>`;
     } else {
       const lv = this.setup.troops[q.type].lv;
       this.popup.innerHTML = `
         <div class="pop-title"><img src="${troopIcon(q.type, this.us, 48)}" alt=""> ${T.name} <span class="stars">${'★'.repeat(q.star)}</span> <small>Lv${lv}</small></div>
         <div class="pop-hp"><div class="bar"><i style="width:${(q.hp / q.maxHp) * 100}%"></i></div></div>
-        ${this.relHtml(q.type)}${area}
+        ${trait}${this.relHtml(q.type)}${area}
         <div class="pop-btns">
           <button class="pbtn promote" type="button"></button>
           <button class="pbtn retreat" type="button"></button>

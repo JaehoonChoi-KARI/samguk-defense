@@ -4,7 +4,7 @@
 import {
   TROOPS, TROOP_KEYS, TROOP_UNLOCK, LORDS, SKILLS, equipFx, cmdPower,
   leadership, troopLevelMult, startFood, ITEM_KEYS, diffOf, crowdMult,
-  GENERALS, GEN_SPECIALS, GENERAL_PICKS, GENERAL_HP, GENERAL_ATK, generalsOf, weatherKey, stageChallenge,
+  GENERALS, GEN_SPECIALS, GENERAL_PICKS, GENERAL_HP, GENERAL_ATK, generalsOf, weatherKey, stageChallenge, holdsRoad,
 } from './data.js';
 import { stageLayout } from './maps.js';
 import { stageField } from './field.js';
@@ -140,7 +140,7 @@ export function generalStats(save, key) {
     atk: base.atk * GENERAL_ATK * (1 + (equipTotals(save).genPower || 0)),
     cd: base.cd,
     range: Math.round(base.range * 1.15),
-    block: TROOPS[G.type].melee ? (G.kind === 'guard' ? sp.block : 3) : 0,
+    block: holdsRoad(G.type) ? (G.kind === 'guard' ? sp.block : 3) : 0,
     dr: G.kind === 'guard' ? sp.dr : 0,
   };
 }

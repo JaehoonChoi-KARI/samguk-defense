@@ -1,7 +1,7 @@
 // Game rules and numbers: troop types and counters, lords and their orders, equipment,
 // consumable items and growth formulas. Balance knobs live here.
 
-export const VERSION = '1.0.12'; // keep in sync with CACHE in sw.js
+export const VERSION = '1.0.13'; // keep in sync with CACHE in sw.js
 export const STAGE_COUNT = 20;
 export const GATE_HP = 60;
 export const MAX_LORD_LEVEL = 30;
@@ -15,35 +15,52 @@ export const ITEM_CARRY_MAX = 3;
 export const TROOP_KEYS = ['infantry', 'spear', 'cavalry', 'archer', 'strategist', 'catapult'];
 
 // Player squads. cost = 군량 to deploy, lead = 통솔력 it takes in the roster.
+// Every type has a named trait shown on its card (the ranged ones just name what they already
+// do). The three melee types each have a trait that makes them fight differently:
+// 보병 is the wall (holds the most enemies, takes less damage, arrows least of all),
+// 창병 is the attacker (strikes first and runs several enemies through), and 기마병 never
+// stands to hold the road: it rides through the enemy, wheels round and rides through again.
 export const TROOPS = {
   infantry: {
     name: '보병', short: '보병', melee: true, cost: 60, lead: 2,
-    hp: 400, atk: 15, cd: 1.0, range: 85, block: 3, speed: 75, reach: 34,
+    hp: 430, atk: 12, cd: 1.0, range: 85, block: 4, speed: 75, reach: 34,
+    trait: { icon: '🛡️', name: '방패벽', dr: 0.12, arrowDr: 0.5, text: '적을 가장 많이 막고, 방패로 받는 피해를 줄여요 (화살은 절반)' },
     desc: '칼과 방패. 길을 막고 오래 버텨요.',
   },
   spear: {
     name: '창병', short: '창병', melee: true, cost: 60, lead: 2,
-    hp: 320, atk: 19, cd: 1.0, range: 90, block: 2, speed: 75, reach: 40,
+    hp: 290, atk: 12, cd: 1.4, range: 90, block: 2, speed: 75, reach: 62,
+    trait: { icon: '🔱', name: '긴 창', pierce: 3, text: '창이 길어 공격은 느리지만, 적이 닿기 전에 먼저 찌르고 한 번에 3명까지 꿰뚫어요' },
     desc: '긴 창으로 길을 막아요. 기마병을 잘 막아요.',
   },
   cavalry: {
     name: '기마병', short: '기마', melee: true, cost: 90, lead: 3,
-    hp: 360, atk: 28, cd: 1.1, range: 140, block: 2, speed: 130, reach: 38,
+    hp: 330, atk: 28, cd: 1.1, range: 230, block: 0, speed: 190, reach: 38,
+    trait: {
+      icon: '🐎', name: '돌격', pass: true, power: 1.6, rest: 0.3, hits: 4, width: 34, over: 90, turn: 0.35,
+      text: '길을 막지 않고, 넓은 구역을 달리며 적진을 뚫고 지나가요 (처음 부딪힌 적은 1.6배, 스친 적은 한 번 반격해요)',
+    },
     desc: '멀리까지 달려 나가 강하게 들이받아요.',
   },
   archer: {
     name: '궁수', short: '궁수', melee: false, cost: 70, lead: 2,
-    hp: 160, atk: 13, cd: 0.8, range: 200,
+    hp: 160, atk: 19, cd: 0.8, range: 200,
+    role: '한 명씩 빠르게',
+    trait: { icon: '🏹', name: '속사', text: '0.8초마다 빠르게 쏘고, 노린 적이 먼저 쓰러지면 화살이 옆의 적에게 날아가요' },
     desc: '멀리 있는 적을 빠르게 쏴요.',
   },
   strategist: {
     name: '책사', short: '책사', melee: false, cost: 100, lead: 3,
-    hp: 150, atk: 21, cd: 2.2, range: 180, splash: 52, burn: 0.5, slow: 0.3,
+    hp: 150, atk: 23, cd: 2.2, range: 180, splash: 52, burn: 0.5, slow: 0.3,
+    role: '불로 둘레 여럿을',
+    trait: { icon: '🔥', name: '화계', text: '불을 던져 둘레의 적까지 태우고(2.5초 더 타요), 맞은 적은 잠깐 느려져요' },
     desc: '책략으로 불을 질러요. 맞은 적은 불타고 느려져요.',
   },
   catapult: {
     name: '투석기', short: '투석', melee: false, cost: 120, lead: 4,
-    hp: 210, atk: 42, cd: 3.2, range: 290, splash: 66,
+    hp: 210, atk: 27, cd: 3.2, range: 290, splash: 66,
+    role: '가장 멀리, 여럿을',
+    trait: { icon: '🪨', name: '바위 세례', text: '가장 멀리 던져 떨어진 곳의 적을 한꺼번에 때려요. 움직이는 적은 앞을 보고 던져요' },
     desc: '아주 멀리 큰 돌을 던져 여럿을 한꺼번에 때려요.',
   },
 };
@@ -108,6 +125,8 @@ export function counterLevel(att, def) {
   return 0;
 }
 export const counterMult = (att, def) => COUNTER_MULT[counterLevel(att, def)];
+// Melee types that stand and stop enemies (기마병 ride through instead).
+export const holdsRoad = t => !!TROOPS[t]?.melee && !TROOPS[t].trait?.pass;
 // Who beats t, the very strong one first.
 export const weakTo = t => [...TROOP_KEYS.filter(k => STRONG[k][0] === t), ...TROOP_KEYS.filter(k => STRONG[k][1] === t)];
 
@@ -190,7 +209,7 @@ export const GROUND = {
   plain: { name: '평지', icon: '', text: '' },
   hill: { name: '언덕', icon: '⛰️', text: '원거리 부대 사거리 +20%, 공격 +10%', range: 0.2, atk: 0.1 },
   forest: { name: '숲', icon: '🌲', text: '매복: 적의 화살·돌·기습을 받지 않고, 첫 공격은 2배', ambush: 2 },
-  choke: { name: '길목', icon: '🚧', text: '근접 부대가 적을 더 많이 막아요', block: 1 },
+  choke: { name: '길목', icon: '🚧', text: '보병·창병이 적을 더 많이 막아요', block: 1 },
 };
 
 // Formations: squads in cells side by side (up, down, left, right) help each other.
@@ -428,10 +447,10 @@ export const NO_REWARD_GAP = 2; // lord level ≥ recommended + this → replays
 // crowd at stage 20; or crowdBands, one multiplier for each five stages; or crowdPts,
 // [[stage, multiplier], ...] joined by straight lines.
 export const DIFFS = [
-  { key: 'easy', name: '쉬움', icon: '🌱', hp: 1.33, atk: 1.2, shp: 1.65, satk: 1.45, gold: 0.85, desc: '적이 약해요. 처음 하는 사람에게 추천' },
+  { key: 'easy', name: '쉬움', icon: '🌱', hp: 1.33, atk: 1.2, shp: 1.85, satk: 1.55, gold: 0.85, desc: '적이 약해요. 처음 하는 사람에게 추천' },
   { key: 'normal', name: '보통', icon: '⚔️', hp: 2.63, atk: 1.79, gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
-  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.4, atk: 2.21, crowdPts: [[1, 1], [5, 1.2], [20, 1.2]], gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
-  { key: 'hell', name: '지옥', icon: '💀', hp: 4.11, atk: 2.58, crowdBands: [2, 1.6, 1.6, 1.1], gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
+  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.4, atk: 2.21, crowdPts: [[1, 1], [5, 1.2], [15, 1.2], [20, 1.42]], gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
+  { key: 'hell', name: '지옥', icon: '💀', hp: 4.11, atk: 2.58, crowdBands: [2.8, 1.7, 1.6, 1.13], gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
 ];
 export const diffOf = save => DIFFS[save?.diff ?? 1] || DIFFS[1];
 export function crowdMult(D, n) {

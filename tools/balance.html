@@ -16,7 +16,7 @@
 //   &naive=1 (the bot places without a plan: no road joins, choke or hill cells, formations)
 import { STORIES } from '../js/stories.js';
 import { buildWaves, WAVE_TUNE } from '../js/waves.js';
-import { HORDE_STATS, DIFFS, crowdMult } from '../js/data.js';
+import { HORDE_STATS, DIFFS, crowdMult, TROOPS } from '../js/data.js';
 import { stageLayout } from '../js/maps.js';
 import { battleSetup } from '../js/army.js';
 import { Sim } from '../js/sim.js';
@@ -24,6 +24,14 @@ import { autoplay, expectedSave, recommendRoster, recommendGenerals } from '../j
 import { TALENT_PLAN } from '../js/talents.js';
 
 const P = new URLSearchParams(location.search);
+// &set=cavalry.atk:25,infantry.trait:null tries other numbers for our troops (null removes a trait)
+for (const kv of (P.get('set') || '').split(',').filter(Boolean)) {
+  const [path, v] = kv.split(':');
+  const keys = path.split('.');
+  let o = TROOPS;
+  for (const k of keys.slice(0, -1)) o = o[k];
+  o[keys[keys.length - 1]] = v === 'null' ? undefined : +v;
+}
 const lords = (P.get('lords') || 'liubei,caocao,sunquan').split(',');
 const [a, b] = (P.get('stages') || '1-20').split('-').map(Number);
 const diff = +(P.get('diff') ?? 1);

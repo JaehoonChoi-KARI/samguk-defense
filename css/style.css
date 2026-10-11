@@ -449,6 +449,7 @@ em.up { color: #e07b00; font-style: normal; }
 .good { color: var(--good); }
 .bad { color: var(--bad); }
 .tc p { margin: 2px 0; font-size: 13px; color: var(--ink2); }
+.tc-trait { font-size: 13px; line-height: 1.35; background: rgba(255,255,255,0.55); border-radius: 10px; padding: 4px 7px; }
 .up-btn { margin-top: auto; }
 
 .lord-cols { display: grid; grid-template-columns: 0.62fr 1.38fr; gap: 12px; margin-top: 12px; }
@@ -539,8 +540,10 @@ em.up { color: #e07b00; font-style: normal; }
 .sbtn .cdt { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); z-index: 3; font-size: 15px; color: #fff; text-shadow: 0 1px 3px #000; text-align: center; }
 .sbtn.active { box-shadow: 0 0 0 4px #7dff9a, 0 0 16px rgba(125,255,154,0.8); }
 .sbtn.active .cdt { color: #c8ffd2; }
-.guide-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+.guide-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px; }
 .guide-grid p { margin: 2px 0 6px; font-size: 14px; }
+.guide-grid .traits { grid-column: 1 / -1; }
+.trait-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 .g-line { font-size: 15px; margin: 4px 0; }
 .g-line small { display: block; color: var(--ink2); font-size: 13px; font-weight: 600; }
 .counters.over { position: fixed; z-index: 30; }

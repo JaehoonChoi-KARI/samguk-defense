@@ -7,7 +7,7 @@ import {
   TROOPS, FOES, STAR_MULT, STAR_RANGE, STAR_COST, RETREAT_REFUND, GATE_HP, counterMult, counterLevel, BOSS,
   SKILLS, ITEMS, stageHpMult, stageAtkMult, killFood, PASSIVE_FOOD, TROOP_KEYS, diffScale,
   GENERALS, GEN_SPECIALS, GENERAL_RECOVER, GENERAL_MOVE_WAIT, GROUND, FORMATIONS,
-  WEATHER, DUEL, duelChance, ROUT, skillDur, startFood, AURA_R, HORDE, hordeHp, hordeAtk,
+  WEATHER, DUEL, duelChance, ROUT, skillDur, startFood, AURA_R, HORDE, hordeHp, hordeAtk, holdsRoad,
 } from './data.js';
 import { pathAt, nearestOnPaths, WORLD_W, WORLD_H } from './maps.js';
 import { cellKey, sizeOf, anchorAt, footCenter, footCells, footNeighbours } from './field.js';
@@ -93,7 +93,7 @@ export class Sim {
 
   blockers() {
     const out = [];
-    for (const s of this.squads) if (TROOPS[s.type].melee) out.push(s);
+    for (const s of this.squads) if (holdsRoad(s.type)) out.push(s);
     out.push(...this.militia, ...this.walls);
     return out;
   }
@@ -1032,11 +1032,14 @@ export class Sim {
       s.atkAnim = Math.max(0, s.atkAnim - dt);
       if (s.duelT > 0) { s.duelT -= dt; continue; } // in a 일기토
       this.regen(s, dt);
-      if (TROOPS[s.type].melee) this.moveMelee(s, dt);
+      const pass = TROOPS[s.type].trait?.pass;
+      if (pass) this.moveCavalry(s, dt);
+      else if (TROOPS[s.type].melee) this.moveMelee(s, dt);
       if (s.gen) {
         this.generalSpecial(s, dt);
         if (s.gone) continue;
       }
+      if (pass) continue; // 기마병 hit while riding through (moveCavalry)
       s.cdT -= dt;
       if (s.cdT > 0) continue;
       const T = TROOPS[s.type];
@@ -1055,10 +1058,16 @@ export class Sim {
         s.atkAnim = 0.3;
         s.target = { x: t.x, y: t.y };
         s.face = t.x >= s.x ? 1 : -1;
-        const extra = multi > 1 ? this.pickTargets(s, T.reach + 30, multi).filter(f => f !== t).slice(0, multi - 1) : [];
+        const tr = T.trait || {};
+        const extra = multi > 1 ? this.pickTargets(s, T.reach + 30, multi).filter(f => f !== t).slice(0, multi - 1)
+          : tr.pierce ? this.pickTargets(s, T.reach + 6, tr.pierce).filter(f => f !== t).slice(0, tr.pierce - 1) : [];
         for (const f of [t, ...extra]) {
           this.hitFoe(f, atk, s.type, s);
           this.emit({ k: 'slash', x: f.x, y: f.y, type: s.type });
+        }
+        if (tr.pierce && extra.length) {
+          const far = extra.reduce((a, b) => (dist(b, s) > dist(a, s) ? b : a), t);
+          this.emit({ k: 'thrust', x: s.x, y: s.y, x2: far.x, y2: far.y });
         }
       } else {
         t = this.pickTarget(s, s.range);
@@ -1109,7 +1118,7 @@ export class Sim {
       s.chase = best;
     }
     const goal = s.chase || { x: s.hx, y: s.hy };
-    const stop = s.chase ? T.reach * 0.6 : 1;
+    const stop = s.chase ? Math.min(T.reach * 0.6, 22) : 1; // close enough that the enemy is stopped
     const dx = goal.x - s.x, dy = goal.y - s.y;
     const d = Math.hypot(dx, dy);
     if (d > stop + 0.5) {
@@ -1124,6 +1133,81 @@ export class Sim {
       s.walkT += dt;
     } else {
       s.moving = false;
+    }
+  }
+
+  // 기마병 never stand and hold the road. They pick a crowd inside their area, ride straight
+  // through it hitting what they pass (the first one hardest), wheel round on the far side
+  // and ride through again, like a strafing run; with nothing in the area they go home.
+  moveCavalry(s, dt) {
+    const T = TROOPS[s.type], tr = T.trait;
+    const leash = s.range;
+    const home = { x: s.hx, y: s.hy };
+    if (s.turnT > 0) { s.turnT -= dt; s.moving = false; return; }
+    const inArea = f => f.hp > 0 && !f.gone && Math.hypot(f.x - s.hx, f.y - s.hy) < leash + 6;
+    const speed = T.speed * (this.weather.speed || 1);
+    if (!s.pass) {
+      let best = null, bs = -Infinity;
+      for (const f of this.foes) {
+        if (!inArea(f)) continue;
+        let crowd = 0;
+        for (const o of this.foes) if (o !== f && Math.abs(o.x - f.x) < 60 && Math.hypot(o.x - f.x, o.y - f.y) < 60) crowd++;
+        const sc = Math.min(crowd, 6) * 0.3 + counterLevel(s.type, f.type) * 0.5 + (f.boss ? 0.5 : 0) - Math.hypot(f.x - s.x, f.y - s.y) / 400;
+        if (sc > bs) { bs = sc; best = f; }
+      }
+      if (best) {
+        // aim where the enemy will be, and keep riding a bit past it
+        const v = this.foeVelocity(best);
+        const lead = Math.hypot(best.x - s.x, best.y - s.y) / speed;
+        const aim = { x: best.x + v.x * lead, y: best.y + v.y * lead };
+        let dx = aim.x - s.x, dy = aim.y - s.y, d = Math.hypot(dx, dy);
+        if (d < 1) { dx = aim.x - home.x || 1; dy = aim.y - home.y; d = Math.hypot(dx, dy); }
+        let end = { x: aim.x + dx / d * tr.over, y: aim.y + dy / d * tr.over };
+        const clamp = p => {
+          const hx = p.x - home.x, hy = p.y - home.y, hd = Math.hypot(hx, hy);
+          return hd > leash ? { x: home.x + hx / hd * leash, y: home.y + hy / hd * leash } : p;
+        };
+        end = clamp(end);
+        // at the edge of the area already: ride back through the middle instead
+        if (Math.hypot(end.x - s.x, end.y - s.y) < 70) end = clamp({ x: home.x - (aim.x - home.x) * 0.6, y: home.y - (aim.y - home.y) * 0.6 });
+        s.pass = { x: end.x, y: end.y, hit: new Set() };
+      }
+    }
+    const goal = s.pass || home;
+    const dx = goal.x - s.x, dy = goal.y - s.y, d = Math.hypot(dx, dy);
+    const step = Math.min(d, speed * dt);
+    if (d > 0.5) {
+      s.x += dx / d * step;
+      s.y += dy / d * step;
+      s.face = dx >= 0 ? 1 : -1;
+      s.moving = true;
+      s.walkT += dt;
+    } else {
+      s.moving = false;
+    }
+    if (!s.pass) return;
+    const cap = tr.hits * (s.gen?.kind === 'multishot' ? 2 : 1);
+    for (const f of this.foes.slice()) {
+      if (s.pass.hit.size >= cap) break;
+      if (f.hp <= 0 || s.pass.hit.has(f) || Math.hypot(f.x - s.x, f.y - s.y) > tr.width) continue;
+      s.pass.hit.add(f);
+      const first = s.pass.hit.size === 1;
+      let atk = s.atk * this.troopAtkMult(s) * (first ? tr.power : tr.rest);
+      if (s.ambush) {
+        atk *= GROUND.forest.ambush;
+        s.ambush = false;
+        this.emit({ k: 'ambush', x: s.x, y: s.y });
+      }
+      this.hitFoe(f, atk, s.type, s);
+      this.emit(first ? { k: 'trample', x: f.x, y: f.y, id: s.id } : { k: 'slash', x: f.x, y: f.y, type: s.type });
+      s.atkAnim = 0.3;
+      // what we ride past strikes back once (a spear wall hurts the most)
+      if (f.hp > 0 && f.stunT <= 0 && f.state !== 'flee') this.hitAlly(s, f.atk, f.type);
+      if (s.hp <= 0) return;
+    }
+    if (d <= step + 0.5) {
+      s.pass = null;
+      s.turnT = tr.turn; // wheel the horses round
     }
   }
 
@@ -1361,6 +1445,13 @@ export class Sim {
   hitAlly(a, dmg, att) {
     if (!a || a.hp <= 0) return;
     let v = dmg * counterMult(att, a.type);
+    const tr = a.kind === 'squad' ? TROOPS[a.type].trait : null;
+    if (tr?.arrowDr) {
+      // 방패벽: shields take some of every blow and most of the arrows
+      const arrow = att === 'archer';
+      v *= 1 - (arrow ? tr.arrowDr : tr.dr);
+      if (arrow && !(a.parryT > this.time)) { a.parryT = this.time + 1.2; this.emit({ k: 'parry', x: a.x, y: a.y }); }
+    }
     if (a.dr) v *= 1 - a.dr;
     if (a.formDr) v *= 1 - a.formDr;
     if (a.gen) v *= 1 - this.buff('genDr');

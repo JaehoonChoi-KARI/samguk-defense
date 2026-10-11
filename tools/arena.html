@@ -1,0 +1,208 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>arena</title>
+</head>
+<body>
+<pre id="out">running...</pre>
+<script type="module">
+// Troop-against-troop check on an empty field: our squads of one type, on plain cells beside
+// one road (no hills, formations, generals, orders, gear or talents), against a stream of
+// enemy soldiers of one type. Reports how many of them the squads kill before the gate.
+//   ?n=9 (stage: enemy strength and our troop level)  &diff=1  &count=36 (enemies)  &gap=0.5 (s)
+//   &mode=one (one squad) | cost (as many squads as &budget=360 군량 buys) | lead (as many as &lead=12
+//   통솔력 takes)  &runs=2  &lv= (troop level)
+//   &star=1  &types=infantry,spear,... (our types)  &json=1
+//   &old=1 (the melee types as they were before their traits, to compare)
+//   &hold=1: an unbreakable wall holds the enemies in a crowd down the road and they are &tough=40
+//   times tougher, so nobody dies of them; the table shows damage per second per 통솔력 over &secs=60
+//   (our squads can still fall to enemy archers and catapults). Compares raw strength per 통솔력.
+//   columns: each enemy type alone, then 고루 = all six types mixed evenly, 보통판 = the mix of a typical stage
+//   &role=1: each type gets the same helpers for its job (melee: &msup=archer:2,catapult:1 behind
+//   it, ranged: &rsup=infantry:3 in front), and two rows show the helpers alone
+import { STORIES } from '../js/stories.js';
+import { TROOPS, TROOP_KEYS } from '../js/data.js';
+import { nearestOnPath, stageLayout, pathAt } from '../js/maps.js';
+import { battleSetup } from '../js/army.js';
+import { Sim } from '../js/sim.js';
+import { expectedSave } from '../js/bot.js';
+import { rng } from '../js/waves.js';
+
+const P = new URLSearchParams(location.search);
+const n = +(P.get('n') || 9);
+// &set=cavalry.atk:25,spear.trait.pierce:2 tries other numbers for our troops (null removes a trait)
+for (const kv of (P.get('set') || '').split(',').filter(Boolean)) {
+  const [path, v] = kv.split(':');
+  const keys = path.split('.');
+  let o = TROOPS;
+  for (const k of keys.slice(0, -1)) o = o[k];
+  o[keys[keys.length - 1]] = v === 'null' ? undefined : +v;
+}
+if (P.get('old') === '1') {
+  Object.assign(TROOPS.infantry, { hp: 400, atk: 15, cd: 1.0, range: 85, block: 3, speed: 75, reach: 34, trait: undefined });
+  Object.assign(TROOPS.spear, { hp: 320, atk: 19, cd: 1.0, range: 90, block: 2, speed: 75, reach: 40, trait: undefined });
+  Object.assign(TROOPS.cavalry, { hp: 360, atk: 28, cd: 1.1, range: 140, block: 2, speed: 130, reach: 38, trait: undefined });
+}
+const diff = +(P.get('diff') ?? 1);
+const count = +(P.get('count') || 36);
+const gap = +(P.get('gap') || 0.5);
+const mode = P.get('mode') || 'one';
+const budget = +(P.get('budget') || 360);
+const leadBudget = +(P.get('lead') || 12);
+const hold = P.get('hold') === '1';
+const tough = +(P.get('tough') || 40);
+const secs = +(P.get('secs') || 60);
+const runs = +(P.get('runs') || 2);
+const star = +(P.get('star') || 1);
+const ours = (P.get('types') || TROOP_KEYS.join(',')).split(',');
+const role = P.get('role') === '1';
+const parseSup = s => s.split(',').filter(Boolean).map(x => { const [t, c] = x.split(':'); return [t, +c || 1]; });
+const msup = parseSup(P.get('msup') || 'archer:2,catapult:1');
+const rsup = parseSup(P.get('rsup') || 'infantry:3');
+if (role) ours.push('sup:m', 'sup:r');
+const lord = 'liubei';
+const stage = STORIES[lord].stages[n - 1];
+const base = expectedSave(lord, n, diff, { talents: 'none' });
+const lv = +(P.get('lv') || Math.round(Object.values(base.troops).reduce((a, b) => a + b, 0) / TROOP_KEYS.length));
+
+// plain cells beside road 0: melee where the guard circle covers the road about halfway to the
+// gate, ranged where the range sees the most of road 0. With &hold=1 everyone stands by the
+// held crowd instead (melee as close as they can, ranged at 60% of their range).
+const HOLD_AT = 0.62;
+function place(sim, type) {
+  const p = sim.paths[0];
+  const range = sim.setup.troops[type].range;
+  const melee = TROOPS[type].melee;
+  const hp = pathAt(p, p.len * HOLD_AT);
+  const score = (at, near) => {
+    if (hold) {
+      const d = Math.hypot(at.x - hp.x, at.y - hp.y);
+      return melee ? -d : -Math.abs(d - range * 0.6);
+    }
+    return melee ? -Math.abs(near.d / p.len - 0.55) - near.dist / 400 : coverage(p, at, range) - Math.abs(near.d / p.len - 0.55) * 4;
+  };
+  let best = null, bs = -Infinity;
+  for (const c of sim.field.list) {
+    if (c.kind !== 'plain' || sim.occ.has(c.c * 100 + c.r)) continue;
+    if (type === 'catapult') continue; // 2×2: tried below with spotFor
+    const near = nearestOnPath(p, c.x, c.y);
+    if (melee && near.dist > range * 0.75) continue;
+    const sc = score(c, near);
+    if (sc > bs) { bs = sc; best = c; }
+  }
+  if (type === 'catapult') {
+    for (const c of sim.field.list) {
+      const spot = sim.spotFor('catapult', c.x + 24, c.y + 24);
+      if (!spot.ok || spot.ground !== 'plain') continue;
+      const sc = score(spot, nearestOnPath(p, spot.x, spot.y));
+      if (sc > bs) { bs = sc; best = { x: spot.x, y: spot.y }; }
+    }
+  }
+  return best;
+}
+function coverage(p, at, range) {
+  let k = 0;
+  for (let i = 1; i < p.pts.length; i++) {
+    const a = p.pts[i - 1], b = p.pts[i];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    for (let t = 0; t < len; t += 16) {
+      const x = a.x + (b.x - a.x) * t / len, y = a.y + (b.y - a.y) * t / len;
+      if (Math.hypot(x - at.x, y - at.y) < range) k++;
+    }
+  }
+  return k;
+}
+
+function fight(type, foe, seed) {
+  const s = JSON.parse(JSON.stringify(base));
+  s.equipped = { weapon: null, armor: null, treasure: null };
+  for (const t of TROOP_KEYS) s.troops[t] = lv;
+  s.picks = [];
+  const setup = battleSetup(s, n - 1, stage, { seed });
+  setup.waves = [];
+  const sim = new Sim(setup);
+  sim.start();
+  sim.gate = 1e6;
+  sim.food = 1e6;
+  const helper = type.startsWith('sup:');
+  const melee = helper ? type === 'sup:m' : TROOPS[type].melee;
+  const put = (t, k) => {
+    sim.roster[t] = (sim.roster[t] || 0) + k;
+    for (let i = 0; i < k; i++) {
+      const at = place(sim, t);
+      const r = at && sim.deploy(t, at.x, at.y);
+      if (r?.ok) for (let st = 1; st < star; st++) { r.squad.star++; sim.applyStar(r.squad); r.squad.hp = r.squad.maxHp; }
+    }
+  };
+  const sup = role || helper ? (melee ? msup : rsup) : [];
+  if (!melee) for (const [t, c] of sup) put(t, c); // the wall goes up first
+  if (!helper) put(type, mode === 'cost' ? Math.max(1, Math.floor(budget / TROOPS[type].cost)) : mode === 'lead' ? Math.max(1, Math.floor(leadBudget / TROOPS[type].lead)) : 1);
+  if (melee) for (const [t, c] of sup) put(t, c);
+  const mine = sim.squads.filter(q => helper || q.type === type);
+  const placed = helper ? 0 : mine.length;
+  const r = rng(seed);
+  const mix = foe === 'avg' ? AVG_MIX : TROOP_KEYS.map(t => [t, 1]);
+  const tot = mix.reduce((a, [, w]) => a + w, 0);
+  const pick = () => { let x = r() * tot; for (const [t, w] of mix) { x -= w; if (x <= 0) return t; } return mix[0][0]; };
+  sim.spawnQueue = Array.from({ length: count }, (_, i) => ({ t: i * gap, type: foe === 'mix' || foe === 'avg' ? pick() : foe, path: 0 }));
+  sim.waveT = 0;
+  const hp0 = mine.reduce((a, q) => a + q.maxHp, 0);
+  // damage dealt, as a share of all the enemy hp that came
+  let dealt = 0, total = 0;
+  const hit = sim.hitFoe.bind(sim), spawn = sim.spawnFoe.bind(sim);
+  sim.hitFoe = (f, dmg, att, src) => { const before = Math.max(0, f.hp); const v = hit(f, dmg, att, src); dealt += Math.min(before, v || 0); return v; };
+  sim.spawnFoe = (...a) => { const f = spawn(...a); if (hold) { f.hp *= tough; f.maxHp *= tough; } total += f.maxHp; return f; };
+  if (hold) {
+    const p = sim.paths[0], at = pathAt(p, p.len * HOLD_AT);
+    sim.walls.push({ kind: 'wall', id: sim.nextId++, type: null, x: at.x, y: at.y, ang: at.ang, hp: 1e12, maxHp: 1e12, t: 1e9, block: 99, blocking: [], lastHit: -99 });
+  }
+  const leadUsed = mine.reduce((a, q) => a + TROOPS[q.type].lead, 0);
+  for (let i = 0; i < 30 * (hold ? secs : 400) && sim.state === 'play'; i++) sim.update(1 / 30);
+  return {
+    kill: sim.stats.kills / count,
+    dps: dealt / Math.max(1, leadUsed) / secs,
+    dmg: dealt / Math.max(1, total),
+    leak: sim.stats.leaked,
+    lost: sim.stats.lost,
+    left: mine.reduce((a, q) => a + Math.max(0, q.hp), 0) / hp0,
+    placed,
+    time: Math.round(sim.time),
+  };
+}
+
+// the enemy mix of a typical stage: every stage of every story, each counted once
+const AVG_MIX = TROOP_KEYS.map(t => [t, Object.values(STORIES).reduce((a, S) => a + S.stages.reduce((b, st) => { const m = st.mix || {}; const tot = Object.values(m).reduce((x, y) => x + y, 0) || 1; return b + (m[t] || 0) / tot; }, 0), 0)]);
+const foes = [...TROOP_KEYS, 'mix', 'avg'];
+const rows = [];
+for (const t of ours) {
+  const row = { type: t, cells: {} };
+  for (const f of foes) {
+    let kill = 0, dmg = 0, dps = 0, lost = 0, left = 0, placed = 0;
+    for (let i = 0; i < runs; i++) {
+      const x = fight(t, f, `arena${i}`);
+      kill += x.kill; dmg += x.dmg; dps += x.dps; lost += x.lost; left += x.left; placed = x.placed;
+    }
+    row.cells[f] = { kill: kill / runs, dmg: dmg / runs, dps: dps / runs, lost: lost / runs, left: left / runs };
+    row.placed = placed;
+  }
+  rows.push(row);
+}
+
+const name = t => ({ mix: '고루', avg: '보통판', 'sup:m': '근접지원만', 'sup:r': '원거리벽만' }[t] || TROOPS[t].short);
+const pad = (s, w) => { s = String(s); let len = 0; for (const ch of s) len += ch.charCodeAt(0) > 255 ? 2 : 1; return s + ' '.repeat(Math.max(0, w - len)); };
+let txt = `arena n=${n} diff=${diff} lv=${lv} star=${star} mode=${mode}${mode === 'cost' ? ` budget=${budget}` : mode === 'lead' ? ` lead=${leadBudget}` : ''} enemies=${count} gap=${gap}s runs=${runs} paths=${stageLayout(n).paths.length}${role ? ` role: melee+${P.get('msup') || 'archer:2,catapult:1'}, ranged+${P.get('rsup') || 'infantry:3'}` : ''}\n`;
+txt += hold ? `damage per second per 통솔력 against a held crowd (${secs}s), then ✝ = our squads all fell, or /our hp left %\n`
+  : 'kill% (damage% of all enemy hp) then ✝ = our squads all fell, or /our hp left %\n';
+txt += pad('우리\\적', 10) + foes.map(f => pad(name(f), 14)).join('') + '\n';
+for (const r of rows) {
+  txt += pad(r.placed ? `${name(r.type)}×${r.placed}` : name(r.type), 10) + foes.map(f => {
+    const c = r.cells[f];
+    const end = c.left <= 0.001 ? '✝' : `/${Math.round(c.left * 100)}`;
+    return pad(hold ? `${c.dps.toFixed(1)}${end}` : `${Math.round(c.kill * 100)}(${Math.round(c.dmg * 100)})${end}`, 14);
+  }).join('') + '\n';
+}
+document.getElementById('out').textContent = P.get('json') === '1' ? JSON.stringify(rows) : txt;
+</script>
+</body>
+</html>

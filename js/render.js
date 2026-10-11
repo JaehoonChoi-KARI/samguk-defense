@@ -506,6 +506,22 @@ export class BattleView {
         case 'slash':
           this.fx.push({ k: 'slash', x: e.x, y: e.y - 12, t: 0, life: 0.18, a: Math.random() * 6 });
           break;
+        case 'thrust': // 긴 창 runs through a line of soldiers
+          this.fx.push({ k: 'thrust', x: e.x, y: e.y, x2: e.x2, y2: e.y2, t: 0, life: 0.22 });
+          break;
+        case 'trample': { // 기마병 돌격: the first enemy a pass rides into
+          this.ring(e.x, e.y, 6, 34, '#f0c070', 0.3);
+          this.burst(e.x, e.y, '#b08a5a', 10);
+          this.trampleT = this.trampleT || new Map();
+          if (this.t - (this.trampleT.get(e.id) ?? -9) > 3) { // the word now and then, not on every pass
+            this.trampleT.set(e.id, this.t);
+            this.text(e.x, e.y - 44, '돌격!', '#ffd27a', 17, 0.9);
+          }
+          break;
+        }
+        case 'parry': // 방패벽 catches arrows
+          this.fx.push({ k: 'parry', x: e.x, y: e.y - 16, t: 0, life: 0.4 });
+          break;
         case 'boom':
           this.ring(e.x, e.y, 6, e.r, e.big ? '#ffb347' : '#e0d2b0', e.big ? 0.6 : 0.35);
           this.burst(e.x, e.y, e.big ? '#ff8a30' : '#9a8a70', e.big ? 26 : 10);
@@ -1136,6 +1152,20 @@ export class BattleView {
         ctx.arc(f.x, f.y, 12, f.a, f.a + 2.2);
         ctx.strokeStyle = `rgba(255,255,255,${1 - k})`;
         ctx.lineWidth = 3;
+        ctx.stroke();
+      } else if (f.k === 'thrust') {
+        ctx.strokeStyle = `rgba(220,240,255,${1 - k})`;
+        ctx.lineWidth = 4 * (1 - k) + 1;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(f.x, f.y - 14);
+        ctx.lineTo(f.x2, f.y2 - 12);
+        ctx.stroke();
+      } else if (f.k === 'parry') {
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, 16 + 6 * k, -2.4, -0.7);
+        ctx.strokeStyle = `rgba(255,220,120,${1 - k})`;
+        ctx.lineWidth = 4;
         ctx.stroke();
       } else if (f.k === 'dash') {
         ctx.strokeStyle = `rgba(200,230,255,${1 - k})`;

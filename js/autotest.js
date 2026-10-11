@@ -4,8 +4,8 @@
 // Scenes: title, slots, lord, story, base, map, prep, battle, boss, result, barracks, lordinfo, equip, counters
 
 import { STORIES } from './stories.js';
-import { TROOP_KEYS, LORD_KEYS, EQUIPS, FACTIONS, STAGE_COUNT, BOSS_SKILLS, TROOP_UNLOCK, GENERALS, CHALLENGES, stageChallenge, LORDS, SKILL_CD, GATE_HP, fxText, equipFx } from './data.js';
-import { PLACES, stageLayout, pathAt } from './maps.js';
+import { TROOPS, TROOP_KEYS, LORD_KEYS, EQUIPS, FACTIONS, STAGE_COUNT, BOSS_SKILLS, TROOP_UNLOCK, GENERALS, CHALLENGES, stageChallenge, LORDS, SKILL_CD, GATE_HP, fxText, equipFx } from './data.js';
+import { PLACES, stageLayout, pathAt, nearestOnPaths } from './maps.js';
 import { stageField, cellKey, CELL } from './field.js';
 import { buildWaves } from './waves.js';
 import { battleSetup, troopStats, skillList, lordLeadership } from './army.js';
@@ -183,6 +183,59 @@ function botBattles() {
     const ch = choke && sim.deploy('infantry', choke.x, choke.y).squad;
     if (ch && ch.block !== ch.base.block + 1) fail('plate: choke');
     out.checks.push({ plate: { cells: F.list.length, ground: F.counts, squads: sim.squads.length, links: sim.links.length } });
+  }
+  // melee traits: 보병 shields (less damage, arrows least), 창병 runs up to 3 through,
+  // 기마병 never holds the road and rides through a crowd, then goes home
+  {
+    const s = expectedSave('liubei', 8, 1, { talents: 'none' });
+    s.equipped = { weapon: null, armor: null, treasure: null };
+    const sim = new Sim(battleSetup(s, 7, STORIES.liubei.stages[7], { seed: 'melee' }));
+    sim.start();
+    sim.food = 9999;
+    for (const t of TROOP_KEYS) sim.roster[t] = 9;
+    const p = sim.paths[0];
+    const cells = sim.field.list.filter(c => c.kind === 'plain' && nearestOnPaths(sim.paths, c.x, c.y).path === 0).sort((a, b) => a.road - b.road);
+    const freeCell = (far = []) => cells.find(c => !sim.occ.has(cellKey(c.c, c.r)) && far.every(q => Math.hypot(q.x - c.x, q.y - c.y) > 400));
+    const inf = sim.deploy('infantry', freeCell().x, freeCell().y).squad;
+    const arrowLoss = (inf.hp = inf.maxHp, sim.hitAlly(inf, 100, 'archer'), inf.maxHp - inf.hp);
+    const blowLoss = (inf.hp = inf.maxHp, sim.hitAlly(inf, 100, 'infantry'), inf.maxHp - inf.hp);
+    const IT = TROOPS.infantry.trait;
+    if (Math.abs(arrowLoss - 100 * (1 - IT.arrowDr)) > 0.5 || Math.abs(blowLoss - 100 * (1 - IT.dr)) > 0.5) fail(`방패벽: arrows ${arrowLoss}, blows ${blowLoss}`);
+    sim.retreat(inf.id);
+    // spear: three soldiers in reach all get hit by the first thrust
+    const sc = freeCell();
+    const spr = sim.deploy('spear', sc.x, sc.y).squad;
+    let at = nearestOnPaths(sim.paths, spr.x, spr.y);
+    const three = [-6, 0, 6].map(k => sim.spawnFoe('infantry', at.path, false, at.d + k));
+    const hp3 = three.map(f => f.hp);
+    let thrust = false;
+    for (let i = 0; i < 15; i++) { sim.update(1 / 30); thrust = thrust || sim.events.some(e => e.k === 'thrust'); sim.events.length = 0; }
+    const pierced = three.filter((f, i) => f.hp < hp3[i]).length;
+    if (pierced < 3 || !thrust) fail(`긴 창: hit ${pierced} of 3 (thrust ${thrust})`);
+    for (const f of sim.foes.slice()) sim.killFoe(f);
+    sim.retreat(spr.id);
+    // cavalry: rides through, holds nobody, hits several, comes home
+    const cc = freeCell([spr]) || freeCell();
+    const cav = sim.deploy('cavalry', cc.x, cc.y).squad;
+    at = nearestOnPaths(sim.paths, cav.x, cav.y);
+    const pack = [];
+    for (let i = 0; i < 8; i++) pack.push(sim.spawnFoe('infantry', at.path, false, at.d - 60 + i * 6));
+    const hp8 = pack.map(f => f.hp);
+    let far = 0, held = false, rode = false;
+    for (let i = 0; i < 30 * 3; i++) {
+      sim.update(1 / 30);
+      far = Math.max(far, Math.hypot(cav.x - cav.hx, cav.y - cav.hy));
+      held = held || sim.blockers().includes(cav) || sim.foes.some(f => f.blocker === cav);
+      rode = rode || sim.events.some(e => e.k === 'trample');
+      sim.events.length = 0;
+    }
+    const hurt = pack.filter((f, i) => f.gone || f.hp < hp8[i]).length;
+    if (held || !rode || hurt < 3 || far < 40) fail(`돌격: held ${held} rode ${rode} hurt ${hurt} far ${Math.round(far)}`);
+    for (const f of sim.foes.slice()) sim.killFoe(f);
+    for (let i = 0; i < 30 * 4; i++) sim.update(1 / 30);
+    const home = Math.hypot(cav.x - cav.hx, cav.y - cav.hy);
+    if (home > 2) fail(`돌격: not home (${Math.round(home)})`);
+    out.checks.push({ melee: { arrowLoss, blowLoss, pierced, cavHurt: hurt, cavFar: Math.round(far) } });
   }
   // 일기토 and morale: a general beside the enemy general duels once; a fallen general sends
   // its soldiers running
@@ -688,7 +741,10 @@ async function shot(game, name, params) {
       const pos = bot.pickPos(ty, b.setup.troops[ty].range);
       if (pos) b.ghostAt(pos);
     }
-    if (params.has('squad')) b.openSquad(b.sim.squads.find(q => !q.gen) || b.sim.squads[0]);
+    if (params.has('squad')) { // &squad=1, or &squad=cavalry for a squad of that type
+      const want = params.get('squad');
+      b.openSquad(b.sim.squads.find(q => !q.gen && (TROOPS[want] ? q.type === want : true)) || b.sim.squads[0]);
+    }
     if (tutKey && b.tut) b.tut.enter(TUT_STEPS.find(s => s.key === tutKey));
     if (params.has('aim')) b.onSkill(2);
     if (params.has('geninfo')) b.toggleGenInfo(b.sim.generals[0].key);

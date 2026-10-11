@@ -2,11 +2,11 @@
 // battle preparation, barracks, lord skills, equipment, counter chart, results, pause, ending.
 
 import {
-  VERSION, GATE_HP, TROOPS, TROOP_KEYS, STRONG, STRONG_WHY, LORDS, LORD_KEYS, SKILLS, SKILL_UNLOCK, EQUIPS, GRADES, SLOTS,
+  VERSION, GATE_HP, HORDE, TROOPS, TROOP_KEYS, STRONG, STRONG_WHY, LORDS, LORD_KEYS, SKILLS, SKILL_UNLOCK, EQUIPS, GRADES, SLOTS,
   ITEMS, ITEM_KEYS, ITEM_CARRY_MAX, FACTIONS, TROOP_UNLOCK, BOSS_SKILLS, MAX_TROOP_LEVEL, MAX_ENHANCE,
   STAGE_COUNT, troopUpCost, enhanceCost, equipFx, fxText, expNeed, recLevel, stageGold, fmt, weakTo, pct,
   DIFFS, diffOf, crowdMult, GENERALS, GEN_SPECIALS, GENERAL_PICKS, COUNTER_MARK, COUNTER_NAME, COUNTER_MULT, relations, bestLevel, RING,
-  generalsOf, WEATHER, weatherKey, stageChallenge, challengeGold, GROUND, FORMATIONS,
+  generalsOf, WEATHER, weatherKey, stageChallenge, challengeGold, GROUND, FORMATIONS, holdsRoad,
 } from './data.js';
 import { PLACES } from './maps.js';
 import { STORIES } from './stories.js';
@@ -698,14 +698,15 @@ function barracksScreen(game, arg = {}) {
       const nx = max ? null : troopStats({ ...s, troops: { ...s.troops, [t]: lv + 1 } }, t);
       return `
         <div class="tc" data-t="${t}">
-          <div class="tc-head">${troopImg(s, t, 64)}<div><b>${T.name}</b> <span class="lv">Lv ${lv}</span><br><small>${T.melee ? '근접 · 길을 막아요' : '원거리'}</small></div></div>
+          <div class="tc-head">${troopImg(s, t, 64)}<div><b>${T.name}</b> <span class="lv">Lv ${lv}</span><br><small>${!T.melee ? `원거리 · ${T.role}` : holdsRoad(t) ? `근접 · 적 ${T.block * HORDE}명까지 막아요` : '근접 · 막지 않고 휩쓸어요'}</small></div></div>
           <div class="tc-stats">
             <span>❤ ${fmt(st.hp)}${nx ? ` <i>→ ${fmt(nx.hp)}</i>` : ''}</span>
             <span>⚔ ${fmt(st.atk)}${nx ? ` <i>→ ${fmt(nx.atk)}</i>` : ''}</span>
-            <span>🎯 ${st.range}</span>
+            <span>🎯 ${st.range}${T.melee && !holdsRoad(t) ? '' : ` · ⏱ ${T.cd}초`}</span>
             <span>🌾 ${T.cost} · 🚩 ${T.lead}</span>
           </div>
           <div class="tc-rel"><span class="good">${relations(t).good.map(([x, lv]) => `${COUNTER_MARK[lv]} ${name(x)}`).join(' · ')}</span><span class="bad">${relations(t).bad.map(([x, lv]) => `${COUNTER_MARK[lv]} ${name(x)}`).join(' · ')}</span></div>
+          ${T.trait ? `<div class="tc-trait">${T.trait.icon} <b>${T.trait.name}</b>: ${T.trait.text}</div>` : ''}
           <p>${T.desc}</p>
           <button class="btn up-btn ${max ? '' : 'primary'}" type="button" ${max ? 'disabled' : ''}>${max ? '최고 레벨' : `⬆ 강화 💰${fmt(troopUpCost(lv))}`}</button>
         </div>`;
@@ -992,6 +993,9 @@ function countersScreen(game, arg = {}) {
       <p class="ct-tip">💡 정찰 보고에서 적 병종을 보고, 그 적에게 ▲인 부대를 데려가세요!</p>
       <h2 class="center-title">🗺️ 전장 안내</h2>
       <div class="guide-grid">
+        <div class="ct traits"><div class="ct-head">⚔️ <b>병종 특성</b> <small>근접 · 원거리</small></div>
+          <div class="trait-cols">${[true, false].map(m => `<div>${TROOP_KEYS.filter(t => !!TROOPS[t].melee === m).map(t => `<div class="g-line">${TROOPS[t].trait.icon} <b>${TROOPS[t].name} · ${TROOPS[t].trait.name}</b> <small>${TROOPS[t].trait.text}</small></div>`).join('')}</div>`).join('')}</div>
+        </div>
         <div class="ct"><div class="ct-head">🧱 <b>진지 칸과 지형</b></div>
           <p>부대는 길 옆 진지 칸에 블록처럼 끼워요. 투석기는 2×2칸을 차지해요.</p>
           ${['hill', 'forest', 'choke'].map(k => `<div class="g-line">${GROUND[k].icon} <b>${GROUND[k].name}</b> <small>${GROUND[k].text}</small></div>`).join('')}

@@ -2,7 +2,7 @@
 // the battle waits, a glowing ring points at the button or the spot it talks about, and a step
 // that asks for an action only moves on once the player has done it.
 
-import { TROOPS, SKILLS, GENERALS, LORDS, GEN_SPECIALS } from './data.js';
+import { TROOPS, SKILLS, GENERALS, LORDS, GEN_SPECIALS, holdsRoad } from './data.js';
 import { Bot } from './bot.js';
 import { tapWord } from './device.js';
 
@@ -11,7 +11,8 @@ const josa = (w, withFinal, without) => {
   const k = w.charCodeAt(w.length - 1) - 0xac00;
   return w + (k >= 0 && k < 11172 && k % 28 ? withFinal : without);
 };
-const firstOf = (c, melee) => Object.keys(c.setup.roster).find(t => c.setup.roster[t] > 0 && !!TROOPS[t].melee === melee);
+// melee = a type that stands and stops enemies (not 기마병, who ride through)
+const firstOf = (c, melee) => Object.keys(c.setup.roster).find(t => c.setup.roster[t] > 0 && (melee ? holdsRoad(t) : !TROOPS[t].melee));
 const cardOf = t => `.icard[data-t="${t}"]`;
 const plainSquads = c => c.sim.squads.filter(q => !q.gen);
 const spot = (c, type, range) => {
@@ -41,7 +42,7 @@ export const TUT_STEPS = [
     focus: c => cardOf(firstOf(c, true)),
     mark: c => { const t = firstOf(c, true); return spot(c, t, c.setup.troops[t].range); },
     skip: c => !firstOf(c, true),
-    done: c => plainSquads(c).some(q => TROOPS[q.type].melee),
+    done: c => plainSquads(c).some(q => holdsRoad(q.type)),
   },
   {
     key: 'ranged', title: '🏹 부대 놓기: 멀리 쏘는 부대',
