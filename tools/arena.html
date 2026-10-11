@@ -66,8 +66,8 @@ const stage = STORIES[lord].stages[n - 1];
 const base = expectedSave(lord, n, diff, { talents: 'none' });
 const lv = +(P.get('lv') || Math.round(Object.values(base.troops).reduce((a, b) => a + b, 0) / TROOP_KEYS.length));
 
-// plain cells beside road 0: melee where the guard circle covers the road about halfway to the
-// gate, ranged where the range sees the most of road 0. With &hold=1 everyone stands by the
+// plain cells beside road 0: melee where the road is about halfway to the gate (then they stand
+// on it, 📍 배치), ranged where the range sees the most of road 0. With &hold=1 everyone stands by the
 // held crowd instead (melee as close as they can, ranged at 60% of their range).
 const HOLD_AT = 0.62;
 function place(sim, type) {
@@ -133,6 +133,11 @@ function fight(type, foe, seed) {
       const at = place(sim, t);
       const r = at && sim.deploy(t, at.x, at.y);
       if (r?.ok) for (let st = 1; st < star; st++) { r.squad.star++; sim.applyStar(r.squad); r.squad.hp = r.squad.maxHp; }
+      // melee stand on the road (📍 배치, as the bot does; &rally=0 leaves them on their cells)
+      if (r?.ok && TROOPS[t].melee && P.get('rally') !== '0') {
+        const to = hold ? pathAt(sim.paths[0], sim.paths[0].len * HOLD_AT) : nearestOnPath(sim.paths[0], r.squad.px, r.squad.py);
+        sim.setRally(r.squad.id, to.x, to.y);
+      }
     }
   };
   const sup = role || helper ? (melee ? msup : rsup) : [];

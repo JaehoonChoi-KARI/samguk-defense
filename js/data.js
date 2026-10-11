@@ -1,7 +1,7 @@
 // Game rules and numbers: troop types and counters, lords and their orders, equipment,
 // consumable items and growth formulas. Balance knobs live here.
 
-export const VERSION = '1.0.15'; // keep in sync with CACHE in sw.js
+export const VERSION = '1.0.16'; // keep in sync with CACHE in sw.js
 export const STAGE_COUNT = 20;
 export const GATE_HP = 60;
 export const MAX_LORD_LEVEL = 30;
@@ -14,7 +14,8 @@ export const ITEM_CARRY_MAX = 3;
 
 export const TROOP_KEYS = ['infantry', 'spear', 'cavalry', 'archer', 'strategist', 'catapult'];
 
-// Player squads. cost = 군량 to deploy, lead = 통솔력 it takes in the roster.
+// Player squads. cost = 군량 to deploy, lead = 통솔력 it takes in the roster. A melee type's range is
+// the circle around its post: where 📍 배치 can send it and all the ground it ever fights on.
 // Every type has a named trait shown on its card (the ranged ones just name what they already
 // do). The three melee types each have a trait that makes them fight differently:
 // 보병 is the wall (holds the most enemies, takes less damage, arrows least of all),
@@ -38,7 +39,7 @@ export const TROOPS = {
     hp: 330, atk: 28, cd: 1.1, range: 250, block: 0, speed: 190, reach: 38,
     trait: {
       icon: '🐎', name: '돌격', pass: true, power: 1.6, rest: 0.3, hits: 4, width: 34, over: 90, turn: 0.35,
-      text: '길을 막지 않고, 넓은 구역을 달리며 적진을 뚫고 지나가요 (처음 부딪힌 적은 1.6배, 스친 적은 한 번 반격해요)',
+      text: '길을 막지 않고, 다가온 적진을 달려서 뚫고 지나가요 (처음 부딪힌 적은 1.6배, 스친 적은 한 번 반격해요)',
     },
     desc: '멀리까지 달려 나가 강하게 들이받아요.',
   },

@@ -230,24 +230,70 @@ function botBattles() {
       sim.events.length = 0;
     }
     const hurt = pack.filter((f, i) => f.gone || f.hp < hp8[i]).length;
-    if (held || !rode || hurt < 3 || far < 40) fail(`돌격: held ${held} rode ${rode} hurt ${hurt} far ${Math.round(far)}`);
+    if (held || !rode || hurt < 3 || far < 40 || far > cav.range + 0.5) fail(`돌격: held ${held} rode ${rode} hurt ${hurt} far ${Math.round(far)}`);
     for (const f of sim.foes.slice()) sim.killFoe(f);
     for (let i = 0; i < 30 * 4; i++) sim.update(1 / 30);
     const home = Math.hypot(cav.x - cav.hx, cav.y - cav.hy);
     if (home > 2) fail(`돌격: not home (${Math.round(home)})`);
-    // 배치: a squad walks to the point it is given (inside its area), guards there, and comes back
+    // 배치: a squad walks to the point it is given (inside its range), even out of a fight: it
+    // lets go of the soldiers it holds and does not stop for anyone on the way
     const rc = freeCell([cav]) || freeCell();
     const inf2 = sim.deploy('infantry', rc.x, rc.y).squad;
     const road = nearestOnPaths(sim.paths, inf2.px, inf2.py);
-    if (!sim.setRally(inf2.id, road.x, road.y).ok || !inf2.rallied) fail('배치: refused');
-    for (let i = 0; i < 30 * 4; i++) { for (const f of sim.foes.slice()) sim.killFoe(f); sim.update(1 / 30); } // no fights on the way
-    const there = Math.hypot(inf2.x - inf2.hx, inf2.y - inf2.hy);
-    if (there > 3) fail(`배치: did not get there (${Math.round(there)})`);
+    sim.spawnQueue = []; // no wave soldiers in the way from here on
+    sim.nextT = 1e9;
+    for (const f of sim.foes.slice()) sim.killFoe(f);
+    for (let k = 0; k < 6; k++) sim.spawnFoe('infantry', road.path, false, Math.max(0, road.d - 40 + k * 5));
+    for (let i = 0; i < 30 * 4 && !inf2.blocking.length; i++) sim.update(1 / 30);
+    const holding = inf2.blocking.slice();
+    const ahead = pathAt(sim.paths[road.path], Math.min(sim.paths[road.path].len - 10, road.d + 90));
+    if (!holding.length || !sim.setRally(inf2.id, ahead.x, ahead.y).ok || !inf2.rallied) fail(`배치: refused (held ${holding.length})`);
+    if (inf2.blocking.length || holding.some(f => f.state === 'blocked')) fail('배치: still holding soldiers');
+    let arrived = false;
+    for (let i = 0; i < 30 * 4 && !arrived; i++) { sim.update(1 / 30); arrived = !inf2.march && Math.hypot(inf2.x - inf2.hx, inf2.y - inf2.hy) < 1; }
+    if (!arrived) fail(`배치: did not get there (${Math.round(Math.hypot(inf2.x - inf2.hx, inf2.y - inf2.hy))})`);
+    for (const f of sim.foes.slice()) sim.killFoe(f);
+    for (let i = 0; i < 30 * 3; i++) sim.update(1 / 30);
+    // it fights only inside the circle around its post: an enemy anywhere in it is met (even far
+    // from where it stands), one outside it is left alone even when it shoots, and it never
+    // steps out of the circle
+    const spot = { x: inf2.hx, y: inf2.hy };
+    const sp = Math.hypot(inf2.px - spot.x, inf2.py - spot.y);
+    const toPost = { x: (inf2.px - spot.x) / sp, y: (inf2.py - spot.y) / sp };
+    const still = (k, type = 'infantry') => { // k along the line from the spot through the post
+      const f = sim.spawnFoe(type, road.path, false, 0);
+      Object.assign(f, { x: spot.x + toPost.x * k, y: spot.y + toPost.y * k, stunT: 99 });
+      return f;
+    };
+    let out1 = 0;
+    const run = secs => {
+      for (let i = 0; i < 30 * secs; i++) { sim.update(1 / 30); out1 = Math.max(out1, Math.hypot(inf2.x - inf2.px, inf2.y - inf2.py) - inf2.range); }
+    };
+    const farOne = still(sp + inf2.range + TROOPS.infantry.reach + 30);
+    run(2);
+    const stayed = Math.hypot(inf2.x - spot.x, inf2.y - spot.y);
+    if (stayed > 2) fail(`원 밖: ran to an enemy outside its circle (${Math.round(stayed)})`);
+    sim.killFoe(farOne);
+    const inOne = still(sp + 60);
+    run(4);
+    const met = Math.hypot(inf2.x - inOne.x, inf2.y - inOne.y);
+    if (met > 30) fail(`원 안: did not meet an enemy ${Math.round(sp + 60)} away inside its circle (${Math.round(met)})`);
+    sim.killFoe(inOne);
+    run(5);
+    const back = Math.hypot(inf2.x - spot.x, inf2.y - spot.y);
+    if (back > 2) fail(`원 안: not back (${Math.round(back)})`);
+    const farShooter = still(sp + inf2.range + 60, 'archer');
+    sim.shootAt(farShooter, inf2);
+    run(3);
+    const kept = Math.hypot(inf2.x - spot.x, inf2.y - spot.y);
+    if (kept > 2) fail(`원 밖: left its circle for an archer outside (${Math.round(kept)})`);
+    sim.killFoe(farShooter);
+    if (out1 > 0.5) fail(`원 밖: stepped ${Math.round(out1)} out of its circle`);
     sim.setRally(inf2.id, inf2.px + 2000, inf2.py);
     if (Math.hypot(inf2.hx - inf2.px, inf2.hy - inf2.py) > inf2.range + 0.5) fail('배치: not kept inside the area');
     sim.setRally(inf2.id, inf2.px + 5, inf2.py);
     if (inf2.rallied || inf2.hx !== inf2.px) fail('배치: back to the post');
-    out.checks.push({ melee: { arrowLoss, blowLoss, pierced, cavHurt: hurt, cavFar: Math.round(far), rallyTo: Math.round(road.dist) } });
+    out.checks.push({ melee: { arrowLoss, blowLoss, pierced, cavHurt: hurt, cavFar: Math.round(far), rallyHeld: holding.length, metInCircle: Math.round(met) } });
   }
   // 일기토 and morale: a general beside the enemy general duels once; a fallen general sends
   // its soldiers running

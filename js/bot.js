@@ -58,9 +58,10 @@ export class Bot {
   // strategy: place like a player who plans (holds the road where roads join, uses choke and
   // hill cells and formations); false = a player without a plan, who puts each unit on any
   // free cell it can fight from.
-  constructor(sim, { callEarly = false, useSkills = true, useItems = true, bossFocus = true, strategy = true } = {}) {
+  constructor(sim, { callEarly = false, useSkills = true, useItems = true, bossFocus = true, strategy = true, rally = true } = {}) {
     this.bossFocus = bossFocus;
     this.strategy = strategy;
+    this.rally = rally; // 📍 배치 melee onto the road (with strategy)
     this.rand = rng(`naive:${sim.setup.seed}:${sim.setup.stage.id}`);
     this.sim = sim;
     this.t = 0;
@@ -132,9 +133,9 @@ export class Bot {
     return this.anchors[size].filter(a => a.keys.every(k => !sim.occ.has(k)));
   }
 
-  // Melee units go where their guard circle covers the later road (a choke is best, and where
-  // roads join one squad holds them all), ranged units where they see the most road (hills
-  // stretch that); formations are a bonus.
+  // Melee units go where their range covers the later road (a choke is best, and where roads
+  // join one squad holds them all) and then stand on the road (standOnRoad); ranged units go
+  // where they see the most road (hills stretch that); formations are a bonus.
   pickPos(type, range) {
     const sim = this.sim;
     const melee = TROOPS[type].melee;
@@ -159,13 +160,39 @@ export class Bot {
     return best;
   }
 
+  // 📍 배치 like a player: a melee unit goes to stand on the road beside its post, where roads
+  // have joined if that is in its range, so the enemies walk into it.
+  standOnRoad(s) {
+    const sim = this.sim;
+    const spots = [];
+    for (const p of sim.paths) {
+      for (let d = 0; d < p.len; d += 12) {
+        const q = pathAt(p, d);
+        const off = Math.hypot(q.x - s.px, q.y - s.py);
+        if (off > s.range) continue;
+        const roads = sim.paths.filter(o => o === p || nearestOnPath(o, q.x, q.y).dist < 30).length;
+        // not on top of another squad (one stone would hit them all): side by side along the road
+        const crowd = sim.squads.filter(o => o !== s && TROOPS[o.type].melee && Math.hypot(o.hx - q.x, o.hy - q.y) < 40).length;
+        spots.push({ x: q.x, y: q.y, sc: roads - off / 150 - crowd * 0.7 });
+      }
+    }
+    spots.sort((a, b) => b.sc - a.sc);
+    for (const q of spots.slice(0, 5)) if (sim.setRally(s.id, q.x, q.y).ok) return;
+  }
+
+  // (one on a choke cell beside the road stays there: it holds more from the cell)
+  placed(r) {
+    if (r.ok && this.strategy && this.rally && TROOPS[r.squad.type].melee && !(r.squad.ground === 'choke' && holdsRoad(r.squad.type))) this.standOnRoad(r.squad);
+    return r.ok;
+  }
+
   decide() {
     const sim = this.sim;
     // generals first: they are free
     for (const g of sim.generals) {
       if (g.state !== 'hand' || g.waitT > 0) continue;
       const pos = this.pickPos(g.type, g.range);
-      if (pos) sim.deployGeneral(g.key, pos.x, pos.y);
+      if (pos) this.placed(sim.deployGeneral(g.key, pos.x, pos.y));
     }
     // deploy while there is food and room
     for (let k = 0; k < 4; k++) {
@@ -173,7 +200,7 @@ export class Bot {
       if (!t) break;
       const pos = this.pickPos(t, sim.setup.troops[t].range);
       if (!pos) break;
-      if (!sim.deploy(t, pos.x, pos.y).ok) break;
+      if (!this.placed(sim.deploy(t, pos.x, pos.y))) break;
     }
     // promote the most useful squad we can afford
     const free = TROOP_KEYS.some(t => sim.roster[t] > 0);

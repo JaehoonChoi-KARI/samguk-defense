@@ -702,7 +702,7 @@ function barracksScreen(game, arg = {}) {
           <div class="tc-stats">
             <span>❤ ${fmt(st.hp)}${nx ? ` <i>→ ${fmt(nx.hp)}</i>` : ''}</span>
             <span>⚔ ${fmt(st.atk)}${nx ? ` <i>→ ${fmt(nx.atk)}</i>` : ''}</span>
-            <span>🎯 ${st.range}${T.melee && !holdsRoad(t) ? '' : ` · ⏱ ${T.cd}초`}</span>
+            <span>${T.melee ? '📍' : '🎯'} ${st.range}${T.melee && !holdsRoad(t) ? '' : ` · ⏱ ${T.cd}초`}</span>
             <span>🌾 ${T.cost} · 🚩 ${T.lead}</span>
           </div>
           <div class="tc-rel"><span class="good">${relations(t).good.map(([x, lv]) => `${COUNTER_MARK[lv]} ${name(x)}`).join(' · ')}</span><span class="bad">${relations(t).bad.map(([x, lv]) => `${COUNTER_MARK[lv]} ${name(x)}`).join(' · ')}</span></div>
@@ -1009,7 +1009,7 @@ function countersScreen(game, arg = {}) {
           <div class="g-line">🌬️ <b>날씨</b> <small>동남풍은 불이 2배, 비는 불이 약해져요. 안개와 밤은 사거리가 줄어요</small></div>
           <div class="g-line">🎯 <b>도전 과제</b> <small>지역마다 하나씩, 처음 해내면 골드를 더 받아요</small></div>
           <div class="g-line">🛣️ <b>여러 갈래 길</b> <small>길이 하나로 합쳐지는 곳을 막으면 한 부대로 모든 길을 막아요</small></div>
-          <div class="g-line">📍 <b>근접 부대 배치</b> <small>놓은 근접 부대를 누르고 📍 배치를 누른 뒤 설 곳을 누르면, 진지에서 점선 원 안 어디든(길 위도) 가서 지켜요</small></div>
+          <div class="g-line">📍 <b>근접 부대 배치</b> <small>근접 부대는 진지 둘레 📍 거리(노란 원) 안에 들어온 적에게 달려가고, 그 밖으로는 나가지 않아요. 부대를 누르고 📍 배치를 누른 뒤 설 곳을 누르면, 그 원 안 어디든(길 위도) 가서 서요. 싸우던 중이어도 바로 가요</small></div>
         </div>
       </div>
     </div>`);
@@ -1136,7 +1136,7 @@ function generalCard(s, k, { foes = [], picked = false, locked = false } = {}) {
         <b>${G.name}</b> <small>${TROOPS[G.type].name}${lv > 0 ? ` <em class="up${lv > 1 ? ' very' : ''}">${COUNTER_MARK[lv]}</em>` : ''}</small>
         <div class="gc-desc">${G.desc}</div>
         <div class="gc-skill">✨ <b>${G.skill}</b> ${GEN_SPECIALS[G.kind].text}</div>
-        <div class="gc-stat">❤ ${fmt(st.hp)} · ⚔ ${fmt(st.atk)} · 🎯 ${st.range}</div>
+        <div class="gc-stat">❤ ${fmt(st.hp)} · ⚔ ${fmt(st.atk)} · ${TROOPS[G.type].melee ? '📍' : '🎯'} ${st.range}</div>
       </div>
       ${picked ? '<span class="gc-tag">데려감</span>' : ''}
     </button>`;

@@ -20,6 +20,8 @@ import { tapWord } from './device.js';
 import { Tutorial } from './tutorial.js';
 import { DUEL } from './data.js';
 
+const TOP_ROW = 124; // screen px taken by the top row of the battle screen
+
 // Was the stage's challenge met in this (won) battle?
 export function challengeMet(ch, sim) {
   const S = sim.stats;
@@ -606,7 +608,9 @@ export class BattleController {
     let top = s.y + 36;
     if (top + r.height > H - 8) top = s.y - r.height - 40;
     left = Math.max(8, Math.min(W - r.width - 8, left));
-    top = Math.max(60, Math.min(H - r.height - 8, top));
+    // below the top row (the wave panel and general cards) when it fits
+    const low = Math.max(8, H - r.height - 8);
+    top = Math.max(Math.min(TOP_ROW, low), Math.min(low, top));
     p.style.left = `${left}px`;
     p.style.top = `${top}px`;
   }
@@ -645,7 +649,7 @@ export class BattleController {
     this.ui.squad = q;
     const T = TROOPS[q.type];
     const trait = T.trait ? `<div class="pop-skill">${T.trait.icon} <b>${T.trait.name}</b>: ${T.trait.text}</div>` : '';
-    const area = (T.melee ? `<div class="pop-note">점선 원 = 이 부대가 ${holdsRoad(q.type) ? '움직이며 막는' : '달리며 휩쓰는'} 구역</div>` : '') + this.placeHtml(q);
+    const area = (T.melee ? `<div class="pop-note">노란 원 안에 적이 오면 달려가 ${holdsRoad(q.type) ? '막아요' : '휩쓸어요'}. 원 밖으로는 나가지 않아요</div>` : '') + this.placeHtml(q);
     const rally = T.melee ? `<div class="pop-btns"><button class="pbtn rally" type="button">📍 배치: 설 곳 정하기</button></div>` : '';
     if (q.gen) {
       const G = GENERALS[q.general];

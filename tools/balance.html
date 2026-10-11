@@ -13,7 +13,8 @@
 //   &hp=1 &atk=1 (multiply enemy hp / atk to try values)  &items=0 (bot uses no consumable items)
 //   &bosshp=1 (multiply enemy general hp)  &scd=1 (multiply lord skill cooldowns)  &gens=0 (no generals)
 //   &talents=plan|troop|none (how the lord's talent points are spent)  &fhp= &fatk= (horde soldier hp / atk)
-//   &naive=1 (the bot places without a plan: no road joins, choke or hill cells, formations)
+//   &naive=1 (the bot places without a plan: no road joins, choke or hill cells, formations, 📍 배치)
+//   &rally=0 (the planning bot does not use 📍 배치 for its melee units)
 import { STORIES } from '../js/stories.js';
 import { stageWaves, WAVE_TUNE } from '../js/waves.js';
 import { HORDE_STATS, DIFFS, TROOPS } from '../js/data.js';
@@ -78,7 +79,7 @@ for (const lord of lords) {
       const sim = new Sim(setup);
       const step = sim.update.bind(sim); // the most enemies on the field at once
       sim.update = dt => { step(dt); if (sim.foes.length > peak) peak = sim.foes.length; };
-      autoplay(sim, { callEarly: early, useItems, strategy: P.get('naive') !== '1' });
+      autoplay(sim, { callEarly: early, useItems, strategy: P.get('naive') !== '1', rally: P.get('rally') !== '0' });
       if (sim.state === 'won') won++;
       if (sim.lostReason === 'boss') bossLoss++;
       gate += sim.gate;

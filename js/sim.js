@@ -93,7 +93,7 @@ export class Sim {
 
   blockers() {
     const out = [];
-    for (const s of this.squads) if (holdsRoad(s.type)) out.push(s);
+    for (const s of this.squads) if (holdsRoad(s.type) && !s.march) out.push(s); // marching to its 배치: holds nobody
     out.push(...this.militia, ...this.walls);
     return out;
   }
@@ -214,8 +214,9 @@ export class Sim {
 
   newSquad(fields, x, y) {
     return {
-      // px, py = its post (the cell it was put on); hx, hy = where it stands and guards around
-      kind: 'squad', id: this.nextId++, star: 1, x, y, hx: x, hy: y, px: x, py: y, rallied: false,
+      // px, py = its post (the cell it was put on); hx, hy = where it stands and guards around;
+      // march = on its way to a 배치
+      kind: 'squad', id: this.nextId++, star: 1, x, y, hx: x, hy: y, px: x, py: y, rallied: false, march: false,
       cdT: 0.3, blocking: [], lastHit: -99, atkAnim: 0, face: 1, target: null, chase: null, moving: false, walkT: 0,
       ...fields,
     };
@@ -360,9 +361,10 @@ export class Sim {
     return { ok: true };
   }
 
-  // A melee squad or general can be told where to stand (배치): any point inside its area around
-  // its post, the road too. It walks there and guards around that point; it keeps its cell, so
-  // its formations stay, but the cell's ground (choke, forest) only helps while it is on it.
+  // A melee squad or general can be told where to stand (배치): any point inside its range around
+  // its post, the road too. The order comes first: it lets go of the enemies it holds and walks
+  // straight there, then stands there. It keeps its cell, so its formations stay, but the cell's
+  // ground (choke, forest) only helps while it is on it.
   setRally(squadId, x, y) {
     const s = this.squads.find(q => q.id === squadId);
     if (!s || !TROOPS[s.type].melee) return { ok: false, reason: 'type' };
@@ -376,8 +378,11 @@ export class Sim {
     s.hy = away ? y : s.py;
     s.rallied = away;
     if (away) s.ambush = false;
+    this.releaseAll(s);
+    s.march = true;
     s.chase = null;
     s.pass = null;
+    s.turnT = 0;
     this.refreshStats(s);
     this.emit({ k: 'rally', x: s.hx, y: s.hy });
     return { ok: true, x: s.hx, y: s.hy };
@@ -1124,35 +1129,69 @@ export class Sim {
     }
   }
 
-  // Melee squads guard a circle (their range) around where they were put: they run to
-  // enemies inside it, stop them, and walk back home when it is clear.
+  // A melee squad (or general) never leaves the circle of its range around its post (the circle
+  // 📍 배치 shows, 18차): it goes after any enemy it can reach from inside, and nothing else.
+  inArea(s, f) {
+    return f.hp > 0 && !f.gone && Math.hypot(f.x - s.px, f.y - s.py) < s.range + TROOPS[s.type].reach;
+  }
+
+  keepIn(s, x, y) {
+    const dx = x - s.px, dy = y - s.py, d = Math.hypot(dx, dy);
+    return d > s.range ? { x: s.px + dx / d * s.range, y: s.py + dy / d * s.range } : { x, y };
+  }
+
+  // The enemy a melee squad goes for: the best one (score) inside its circle; null = stay.
+  holdTarget(s, score) {
+    let best = null, bs = -Infinity;
+    for (const f of this.foes) {
+      if (!this.inArea(s, f)) continue;
+      const sc = score(f);
+      if (sc > bs) { bs = sc; best = f; }
+    }
+    return best;
+  }
+
+  // On its way to a 배치: straight there, holding nobody and chasing nobody (true once there).
+  marchOn(s, speed, dt) {
+    const dx = s.hx - s.x, dy = s.hy - s.y, d = Math.hypot(dx, dy);
+    if (d <= speed * dt + 0.5) {
+      s.x = s.hx;
+      s.y = s.hy;
+      s.march = false;
+      s.moving = false;
+      return true;
+    }
+    s.x += dx / d * speed * dt;
+    s.y += dy / d * speed * dt;
+    s.face = dx >= 0 ? 1 : -1;
+    s.moving = true;
+    s.walkT += dt;
+    return false;
+  }
+
+  // Melee squads stand where they were put or sent: they run at enemies that come into the
+  // circle around their post, stop them, and walk back to their spot when it is clear.
   moveMelee(s, dt) {
     const T = TROOPS[s.type];
+    const speed = T.speed * (this.weather.speed || 1);
+    if (s.march) { this.marchOn(s, speed, dt); return; }
     if (s.blocking.length) { s.moving = false; s.chase = null; return; }
-    const leash = s.range;
-    const inArea = f => f.hp > 0 && !f.gone && Math.hypot(f.x - s.hx, f.y - s.hy) < leash + 6;
-    if (s.chase && !inArea(s.chase)) s.chase = null;
+    if (s.chase && !this.inArea(s, s.chase)) s.chase = null;
     if (!s.chase) {
-      let best = null, bs = -Infinity;
-      for (const f of this.foes) {
-        if (!inArea(f)) continue;
+      s.chase = this.holdTarget(s, f => {
         const free = f.state === 'walk' || f.state === 'raid' || f.state === 'return';
-        const sc = (free ? 2 : 0) + counterLevel(s.type, f.type) * 0.4 - Math.hypot(f.x - s.x, f.y - s.y) / 120 + (f.boss ? 0.5 : 0);
-        if (sc > bs) { bs = sc; best = f; }
-      }
-      s.chase = best;
+        return (free ? 2 : 0) + counterLevel(s.type, f.type) * 0.4 - Math.hypot(f.x - s.x, f.y - s.y) / 120 + (f.boss ? 0.5 : 0);
+      });
     }
     const goal = s.chase || { x: s.hx, y: s.hy };
     const stop = s.chase ? Math.min(T.reach * 0.6, 22) : 1; // close enough that the enemy is stopped
     const dx = goal.x - s.x, dy = goal.y - s.y;
     const d = Math.hypot(dx, dy);
     if (d > stop + 0.5) {
-      const step = Math.min(d - stop, T.speed * (this.weather.speed || 1) * dt);
-      let nx = s.x + dx / d * step, ny = s.y + dy / d * step;
-      const hx = nx - s.hx, hy = ny - s.hy, hd = Math.hypot(hx, hy);
-      if (hd > leash) { nx = s.hx + hx / hd * leash; ny = s.hy + hy / hd * leash; }
-      s.x = nx;
-      s.y = ny;
+      const step = Math.min(d - stop, speed * dt);
+      const p = this.keepIn(s, s.x + dx / d * step, s.y + dy / d * step);
+      s.x = p.x;
+      s.y = p.y;
       s.face = dx >= 0 ? 1 : -1;
       s.moving = true;
       s.walkT += dt;
@@ -1161,25 +1200,22 @@ export class Sim {
     }
   }
 
-  // 기마병 never stand and hold the road. They pick a crowd inside their area, ride straight
-  // through it hitting what they pass (the first one hardest), wheel round on the far side
-  // and ride through again, like a strafing run; with nothing in the area they go home.
+  // 기마병 never stand and hold the road. When enemies come into the circle around their post
+  // they pick a crowd, ride straight through it hitting what they pass (the first one hardest),
+  // wheel round on the far side and ride through again, like a strafing run; with nothing in
+  // the circle they go back to their spot. They never ride out of it.
   moveCavalry(s, dt) {
     const T = TROOPS[s.type], tr = T.trait;
-    const leash = s.range;
     const home = { x: s.hx, y: s.hy };
-    if (s.turnT > 0) { s.turnT -= dt; s.moving = false; return; }
-    const inArea = f => f.hp > 0 && !f.gone && Math.hypot(f.x - s.hx, f.y - s.hy) < leash + 6;
     const speed = T.speed * (this.weather.speed || 1);
+    if (s.march) { this.marchOn(s, speed, dt); return; }
+    if (s.turnT > 0) { s.turnT -= dt; s.moving = false; return; }
     if (!s.pass) {
-      let best = null, bs = -Infinity;
-      for (const f of this.foes) {
-        if (!inArea(f)) continue;
+      const best = this.holdTarget(s, f => {
         let crowd = 0;
         for (const o of this.foes) if (o !== f && Math.abs(o.x - f.x) < 60 && Math.hypot(o.x - f.x, o.y - f.y) < 60) crowd++;
-        const sc = Math.min(crowd, 6) * 0.3 + counterLevel(s.type, f.type) * 0.5 + (f.boss ? 0.5 : 0) - Math.hypot(f.x - s.x, f.y - s.y) / 400;
-        if (sc > bs) { bs = sc; best = f; }
-      }
+        return Math.min(crowd, 6) * 0.3 + counterLevel(s.type, f.type) * 0.5 + (f.boss ? 0.5 : 0) - Math.hypot(f.x - s.x, f.y - s.y) / 400;
+      });
       if (best) {
         // aim where the enemy will be, and keep riding a bit past it
         const v = this.foeVelocity(best);
@@ -1188,10 +1224,7 @@ export class Sim {
         let dx = aim.x - s.x, dy = aim.y - s.y, d = Math.hypot(dx, dy);
         if (d < 1) { dx = aim.x - home.x || 1; dy = aim.y - home.y; d = Math.hypot(dx, dy); }
         let end = { x: aim.x + dx / d * tr.over, y: aim.y + dy / d * tr.over };
-        const clamp = p => {
-          const hx = p.x - home.x, hy = p.y - home.y, hd = Math.hypot(hx, hy);
-          return hd > leash ? { x: home.x + hx / hd * leash, y: home.y + hy / hd * leash } : p;
-        };
+        const clamp = p => this.keepIn(s, p.x, p.y);
         end = clamp(end);
         // at the edge of the area already: ride back through the middle instead
         if (Math.hypot(end.x - s.x, end.y - s.y) < 70) end = clamp({ x: home.x - (aim.x - home.x) * 0.6, y: home.y - (aim.y - home.y) * 0.6 });

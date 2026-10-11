@@ -647,8 +647,8 @@ export class BattleView {
       ctx.setLineDash([]);
     }
 
-    // melee squads guard the place they were put: a small banner marks it. One sent somewhere
-    // else (배치) has a dashed line from its post to the banner.
+    // melee squads stand where they were put: a small banner marks it. One sent somewhere else
+    // (배치) has a dashed line from its post to the banner.
     for (const q of sim.squads) {
       if (!TROOPS[q.type].melee) continue;
       if (q.rallied) {
@@ -678,10 +678,11 @@ export class BattleView {
       this.homeFlag(ctx, q.hx, q.hy, ui.squad === q);
     }
 
-    // range circle for the selected squad
+    // the selected squad: its range; for melee the circle around its post it fights in (yellow)
     if (ui.squad && sim.squads.includes(ui.squad)) {
       const q = ui.squad;
-      this.rangeCircle(ctx, q.hx, q.hy, q.range, '#ffffff');
+      if (TROOPS[q.type].melee) this.rangeCircle(ctx, q.px, q.py, q.range, '#ffe27a');
+      else this.rangeCircle(ctx, q.hx, q.hy, q.range, '#ffffff');
     }
     if (ui.preview) this.rangeCircle(ctx, ui.preview.x, ui.preview.y, ui.preview.r, '#ffe27a');
     if (ui.ghost && ui.ghost.x !== undefined) this.drawGhost(ctx, ui.ghost);
