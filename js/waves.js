@@ -37,15 +37,16 @@ function pick(r, weights) {
 }
 
 // Returns [{ groups: [{ type, count, path, gap, at }], boss: bool }]
-// `at` = seconds after the wave starts when the group begins marching.
-export function buildWaves(stage, n, pathCount) {
+// `at` = seconds after the wave starts when the group begins marching. crowd (from the
+// difficulty) brings more soldiers in bigger, a little denser groups.
+export function buildWaves(stage, n, pathCount, crowd = 1) {
   const r = rng(stage.id);
   const mix = Object.entries(stage.mix || { infantry: 1 }).filter(([k, w]) => TROOP_KEYS.includes(k) && w > 0);
   const W = waveCount(n);
   const tight = wavePack(n) ** WAVE_TUNE.tight;
   const waves = [];
   for (let i = 0; i < W; i++) {
-    let budget = waveBudget(n, i, W) * HORDE;
+    let budget = waveBudget(n, i, W) * HORDE * crowd;
     // Each wave leans on one main type so the next-wave preview matters.
     const main = i === 0 ? mix.slice().sort((a, b) => b[1] - a[1])[0][0] : pick(r, mix);
     const counts = {};
@@ -62,9 +63,9 @@ export function buildWaves(stage, n, pathCount) {
       let left = counts[t];
       while (left > 0) {
         // a group is HORDE times bigger and marches HORDE times closer, so a wave takes as long
-        const size = Math.min(left, (t === 'catapult' ? 2 : 3 + Math.floor(r() * 4)) * HORDE);
+        const size = Math.min(left, Math.round((t === 'catapult' ? 2 : 3 + Math.floor(r() * 4)) * HORDE * crowd));
         const path = pathCount > 1 ? (gi + i) % pathCount : 0;
-        const gap = GAP[t] / HORDE;
+        const gap = GAP[t] / HORDE / Math.sqrt(crowd);
         groups.push({ type: t, count: size, path, gap: gap / tight, at: Math.round(at * 10) / 10 });
         at += (size * gap * 0.7 + 1.5 + r() * 1.5) / tight;
         left -= size;

@@ -5,7 +5,7 @@ import {
   VERSION, GATE_HP, TROOPS, TROOP_KEYS, STRONG, STRONG_WHY, LORDS, LORD_KEYS, SKILLS, SKILL_UNLOCK, EQUIPS, GRADES, SLOTS,
   ITEMS, ITEM_KEYS, ITEM_CARRY_MAX, FACTIONS, TROOP_UNLOCK, BOSS_SKILLS, MAX_TROOP_LEVEL, MAX_ENHANCE,
   STAGE_COUNT, troopUpCost, enhanceCost, equipFx, fxText, expNeed, recLevel, stageGold, fmt, weakTo, pct,
-  DIFFS, diffOf, GENERALS, GEN_SPECIALS, GENERAL_PICKS, COUNTER_MARK, COUNTER_NAME, COUNTER_MULT, relations, bestLevel, RING,
+  DIFFS, diffOf, crowdMult, GENERALS, GEN_SPECIALS, GENERAL_PICKS, COUNTER_MARK, COUNTER_NAME, COUNTER_MULT, relations, bestLevel, RING,
   generalsOf, WEATHER, weatherKey, stageChallenge, challengeGold, GROUND, FORMATIONS,
 } from './data.js';
 import { PLACES } from './maps.js';
@@ -445,7 +445,7 @@ function prepScreen(game, { stageIdx }) {
   const st = story.stages[stageIdx];
   const n = stageIdx + 1;
   const layoutN = stageLayout(n);
-  const waves = buildWaves(st, n, layoutN.paths.length);
+  const waves = buildWaves(st, n, layoutN.paths.length, crowdMult(diffOf(s), n));
   const sum = stageSummary(waves);
   const them = FACTIONS[st.enemy] || FACTIONS.yellow;
   const foeTypes = TROOP_KEYS.filter(t => sum[t]).sort((a, b) => sum[b] - sum[a]);
@@ -1013,7 +1013,7 @@ function resultScreen(game, { r, out }) {
   for (const t of out.unlocked) lines.push(`<div class="rw big">${troopImg(s, t, 40)} 새 병종: <b>${TROOPS[t].name}</b>! <small>병영과 정비에서 쓸 수 있어요</small></div>`);
   let tip = '';
   if (!r.won) {
-    const sum = stageSummary(buildWaves(st, r.stageIdx + 1, stageLayout(r.stageIdx + 1).paths.length));
+    const sum = stageSummary(buildWaves(st, r.stageIdx + 1, stageLayout(r.stageIdx + 1).paths.length, crowdMult(diffOf(s), r.stageIdx + 1)));
     const topT = TROOP_KEYS.filter(t => sum[t]).sort((a, b) => sum[b] - sum[a])[0];
     tip = r.reason === 'boss' ? `💡 적장 <b>${st.boss.name}</b>이(가) 성문을 넘으면 바로 져요. 적장은 가까이 있는 우리 부대와 먼저 싸우니, 적장이 지나가는 길목에 강한 부대와 장수를 모으고, 군주 스킬과 벽력탄·목책을 아껴 두었다가 적장에게 쓰세요. 적장은 <b>${TROOPS[st.boss.type].name}</b>이라 ${weakTo(st.boss.type).map(t => TROOPS[t].name).join(', ')}이(가) 강해요.` : `💡 이번 적은 <b>${TROOPS[topT].name}</b>이 많았어요. ${weakTo(topT).map(t => TROOPS[t].name).join(', ')}이(가) 강해요. 병영에서 병종을 강화하거나, 아이템을 챙겨 보세요.`;
   }

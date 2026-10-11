@@ -3,7 +3,7 @@
 
 import {
   TROOPS, TROOP_KEYS, TROOP_UNLOCK, LORDS, SKILLS, equipFx, cmdPower,
-  leadership, troopLevelMult, startFood, ITEM_KEYS, diffOf,
+  leadership, troopLevelMult, startFood, ITEM_KEYS, diffOf, crowdMult,
   GENERALS, GEN_SPECIALS, GENERAL_PICKS, GENERAL_HP, GENERAL_ATK, generalsOf, weatherKey, stageChallenge,
 } from './data.js';
 import { stageLayout } from './maps.js';
@@ -80,7 +80,7 @@ export function fitRoster(save, roster) {
 export function battleSetup(save, stageIdx, stage, opts = {}) {
   const n = stageIdx + 1;
   const layout = stageLayout(n);
-  const waves = buildWaves(stage, n, layout.paths.length);
+  const waves = buildWaves(stage, n, layout.paths.length, crowdMult(diffOf(save), n));
   const fx = equipTotals(save);
   const tf = LORDS[save.lord].traitFx;
   const troops = {};

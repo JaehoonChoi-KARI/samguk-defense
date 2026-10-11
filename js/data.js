@@ -1,7 +1,7 @@
 // Game rules and numbers: troop types and counters, lords and their orders, equipment,
 // consumable items and growth formulas. Balance knobs live here.
 
-export const VERSION = '1.0.9'; // keep in sync with CACHE in sw.js
+export const VERSION = '1.0.10'; // keep in sync with CACHE in sw.js
 export const STAGE_COUNT = 20;
 export const GATE_HP = 60;
 export const MAX_LORD_LEVEL = 30;
@@ -423,14 +423,30 @@ export const NO_REWARD_GAP = 2; // lord level ≥ recommended + this → replays
 
 // Difficulty is chosen with the lord for a new game. 지옥 appears once an ending has been seen on this device.
 // shp / satk toughen the soldiers alone (not the enemy general): 쉬움 stays easy with a plan but
-// is lost now and then by a player who puts units anywhere.
+// is lost now and then by a player who puts units anywhere. crowd* bring more soldiers per wave
+// (a defence game gets harder with numbers): crowdBase before stage crowdFrom, then rising to
+// crowd at stage 20; or crowdBands, one multiplier for each five stages; or crowdPts,
+// [[stage, multiplier], ...] joined by straight lines.
 export const DIFFS = [
   { key: 'easy', name: '쉬움', icon: '🌱', hp: 1.33, atk: 1.2, shp: 1.65, satk: 1.45, gold: 0.85, desc: '적이 약해요. 처음 하는 사람에게 추천' },
   { key: 'normal', name: '보통', icon: '⚔️', hp: 2.63, atk: 1.79, gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
-  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.4, atk: 2.21, gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
-  { key: 'hell', name: '지옥', icon: '💀', hp: 4.11, atk: 2.58, gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
+  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.4, atk: 2.21, crowdPts: [[1, 1], [5, 1.2], [20, 1.2]], gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
+  { key: 'hell', name: '지옥', icon: '💀', hp: 4.11, atk: 2.58, crowdBands: [2, 1.6, 1.6, 1.1], gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
 ];
 export const diffOf = save => DIFFS[save?.diff ?? 1] || DIFFS[1];
+export function crowdMult(D, n) {
+  if (D?.crowdPts) {
+    const p = D.crowdPts;
+    if (n <= p[0][0]) return p[0][1];
+    for (let i = 1; i < p.length; i++) {
+      if (n <= p[i][0]) return p[i - 1][1] + (p[i][1] - p[i - 1][1]) * (n - p[i - 1][0]) / (p[i][0] - p[i - 1][0]);
+    }
+    return p[p.length - 1][1];
+  }
+  if (D?.crowdBands) return D.crowdBands[Math.min(3, Math.floor((n - 1) / 5))];
+  const base = D?.crowdBase || 1, top = D?.crowd || base, from = D?.crowdFrom || 1;
+  return n < from ? base : base + (top - base) * (n - from + 1) / (21 - from);
+}
 // Harder difficulties bite less in the first stages (a new 지옥 game still starts at Lv 1).
 export const diffScale = (m, n) => 1 + (m - 1) * (n === 1 ? 0.5 : n === 2 ? 0.65 : 0.8 + 0.2 * (n - 1) / 19);
 
