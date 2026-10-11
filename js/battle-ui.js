@@ -186,7 +186,7 @@ export class BattleController {
 
   updateHud() {
     const sim = this.sim;
-    this.set('gate', '.v-gate', String(Math.max(0, sim.gate)));
+    this.set('gate', '.v-gate', String(Math.max(0, Math.ceil(sim.gate))));
     this.set('food', '.v-food', fmt(Math.floor(sim.food)));
     this.set('wave', '.v-wave', `${Math.max(0, sim.waveIdx + 1)}/${sim.totalWaves}`);
     this.$('.pill.gate').classList.toggle('low', sim.gate <= GATE_HP * 0.3);
@@ -580,7 +580,7 @@ export class BattleController {
   squadAt(w) {
     let best = null, bd = SQUAD_TAP;
     for (const q of this.sim.squads) {
-      const d = Math.min(Math.hypot(q.x - w.x, q.y - 12 - w.y), Math.hypot(q.hx - w.x, q.hy - 10 - w.y));
+      const d = Math.min(Math.hypot(q.x - w.x, q.y - 12 - w.y), Math.hypot(q.hx - w.x, q.hy - 10 - w.y), Math.hypot(q.px - w.x, q.py - w.y));
       if (d < bd) { bd = d; best = q; }
     }
     return best;
@@ -646,6 +646,7 @@ export class BattleController {
     const T = TROOPS[q.type];
     const trait = T.trait ? `<div class="pop-skill">${T.trait.icon} <b>${T.trait.name}</b>: ${T.trait.text}</div>` : '';
     const area = (T.melee ? `<div class="pop-note">점선 원 = 이 부대가 ${holdsRoad(q.type) ? '움직이며 막는' : '달리며 휩쓰는'} 구역</div>` : '') + this.placeHtml(q);
+    const rally = T.melee ? `<div class="pop-btns"><button class="pbtn rally" type="button">📍 배치: 설 곳 정하기</button></div>` : '';
     if (q.gen) {
       const G = GENERALS[q.general];
       this.popup.innerHTML = `
@@ -653,14 +654,14 @@ export class BattleController {
         <div class="pop-hp"><div class="bar"><i style="width:${(q.hp / q.maxHp) * 100}%"></i></div></div>
         <div class="pop-skill">✨ <b>${G.skill}</b>: ${GEN_SPECIALS[G.kind].text}</div>
         ${trait}${this.relHtml(q.type)}${area}
-        <div class="pop-btns"><button class="pbtn retreat" type="button">↩ 다른 자리로 옮기기</button></div>`;
+        ${rally}<div class="pop-btns"><button class="pbtn retreat" type="button">↩ 다른 자리로 옮기기</button></div>`;
     } else {
       const lv = this.setup.troops[q.type].lv;
       this.popup.innerHTML = `
         <div class="pop-title"><img src="${troopIcon(q.type, this.us, 48)}" alt=""> ${T.name} <span class="stars">${'★'.repeat(q.star)}</span> <small>Lv${lv}</small></div>
         <div class="pop-hp"><div class="bar"><i style="width:${(q.hp / q.maxHp) * 100}%"></i></div></div>
         ${trait}${this.relHtml(q.type)}${area}
-        <div class="pop-btns">
+        ${rally}<div class="pop-btns">
           <button class="pbtn promote" type="button"></button>
           <button class="pbtn retreat" type="button"></button>
         </div>`;
@@ -676,6 +677,10 @@ export class BattleController {
         }
       });
     }
+    this.popup.querySelector('.rally')?.addEventListener('click', e => {
+      e.stopPropagation();
+      this.startRally(q);
+    });
     this.popup.querySelector('.retreat').addEventListener('click', e => {
       e.stopPropagation();
       this.sim.retreat(q.id);
@@ -806,6 +811,15 @@ export class BattleController {
     sfx.select();
   }
 
+  // 배치: after the squad's 📍 button, a press on the map (or a drag from anywhere) shows a dashed
+  // line from its post, and letting go there is where it will stand.
+  startRally(q) {
+    sfx.select();
+    this.closePopup();
+    const name = q.gen ? GENERALS[q.general].name : TROOPS[q.type].name;
+    this.setAim({ kind: 'rally', q, r: 0, label: `📍 ${name}: 설 곳을 ${tapWord()}하세요 (점선 원 안, 길 위도 돼요)` });
+  }
+
   setAim(aim) {
     if (aim && this.sel) { this.sel = null; this.ui.ghost = null; }
     this.ui.aim = aim;
@@ -818,7 +832,12 @@ export class BattleController {
     const aim = this.ui.aim;
     if (!aim) return;
     let ok;
-    if (aim.kind === 'skill') ok = this.castSkill(aim.i, w.x, w.y);
+    if (aim.kind === 'rally') {
+      if (!this.sim.squads.includes(aim.q)) { this.setAim(null); return; }
+      const r = this.sim.setRally(aim.q.id, w.x, w.y);
+      ok = r.ok;
+      if (ok) sfx.deploy(); else { sfx.denied(); this.toast('물 위에는 설 수 없어요'); }
+    } else if (aim.kind === 'skill') ok = this.castSkill(aim.i, w.x, w.y);
     else {
       const r = this.sim.useItem(aim.k, w.x, w.y);
       ok = r.ok;
@@ -875,7 +894,7 @@ export class BattleController {
       stageIdx: this.stageIdx,
       won: sim.state === 'won',
       stars: sim.state === 'won' ? sim.stars() : 0,
-      gate: sim.gate,
+      gate: Math.max(0, Math.ceil(sim.gate)),
       kills: sim.stats.kills,
       lost: sim.stats.lost,
       itemsUsed: { ...sim.itemsUsed },

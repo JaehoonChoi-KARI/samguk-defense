@@ -235,7 +235,19 @@ function botBattles() {
     for (let i = 0; i < 30 * 4; i++) sim.update(1 / 30);
     const home = Math.hypot(cav.x - cav.hx, cav.y - cav.hy);
     if (home > 2) fail(`돌격: not home (${Math.round(home)})`);
-    out.checks.push({ melee: { arrowLoss, blowLoss, pierced, cavHurt: hurt, cavFar: Math.round(far) } });
+    // 배치: a squad walks to the point it is given (inside its area), guards there, and comes back
+    const rc = freeCell([cav]) || freeCell();
+    const inf2 = sim.deploy('infantry', rc.x, rc.y).squad;
+    const road = nearestOnPaths(sim.paths, inf2.px, inf2.py);
+    if (!sim.setRally(inf2.id, road.x, road.y).ok || !inf2.rallied) fail('배치: refused');
+    for (let i = 0; i < 30 * 4; i++) { for (const f of sim.foes.slice()) sim.killFoe(f); sim.update(1 / 30); } // no fights on the way
+    const there = Math.hypot(inf2.x - inf2.hx, inf2.y - inf2.hy);
+    if (there > 3) fail(`배치: did not get there (${Math.round(there)})`);
+    sim.setRally(inf2.id, inf2.px + 2000, inf2.py);
+    if (Math.hypot(inf2.hx - inf2.px, inf2.hy - inf2.py) > inf2.range + 0.5) fail('배치: not kept inside the area');
+    sim.setRally(inf2.id, inf2.px + 5, inf2.py);
+    if (inf2.rallied || inf2.hx !== inf2.px) fail('배치: back to the post');
+    out.checks.push({ melee: { arrowLoss, blowLoss, pierced, cavHurt: hurt, cavFar: Math.round(far), rallyTo: Math.round(road.dist) } });
   }
   // 일기토 and morale: a general beside the enemy general duels once; a fallen general sends
   // its soldiers running
@@ -515,6 +527,26 @@ async function uiFlow(game) {
   if (b.sim.squads.length !== 1) fail('placed on the road');
   b.select(null);
   step('noRoad');
+  // 2b) 배치: tap the squad, its 📍 button, then a point on the road: it goes there to stand
+  const sq = b.sim.squads[0];
+  if (TROOPS[sq.type].melee) {
+    const ss = b.view.toScreen(sq.x, sq.y - 12);
+    fire('pointerdown', ss.x, ss.y);
+    fire('pointerup', ss.x, ss.y);
+    const rb = q('.popup .rally');
+    if (!rb) fail('배치: no button in the squad menu');
+    else {
+      tap(rb);
+      if (b.ui.aim?.kind !== 'rally') fail('배치: not aiming');
+      const to = nearestOnPaths(b.sim.paths, sq.px, sq.py);
+      const ts = b.view.toScreen(to.x, to.y);
+      fire('pointerdown', ts.x - 30, ts.y);
+      fire('pointermove', ts.x, ts.y);
+      fire('pointerup', ts.x, ts.y);
+      if (!sq.rallied || b.ui.aim || Math.hypot(sq.hx - sq.px, sq.hy - sq.py) > sq.range + 1) fail(`배치: rallied ${sq.rallied} aim ${b.ui.aim?.kind}`);
+    }
+  }
+  step('rally');
   // 3) drag a general out of the list onto the map
   const gcard = q('.icard.gen');
   const gk = gcard.dataset.g;
@@ -747,6 +779,14 @@ async function shot(game, name, params) {
     }
     if (tutKey && b.tut) b.tut.enter(TUT_STEPS.find(s => s.key === tutKey));
     if (params.has('aim')) b.onSkill(2);
+    if (params.has('rally')) { // &rally=1: aiming where a melee squad should stand; &rally=2: already sent there
+      const mq = b.sim.squads.find(x => !x.gen && TROOPS[x.type].melee && !x.rallied);
+      if (mq) {
+        const to = nearestOnPaths(b.sim.paths, mq.px, mq.py);
+        if (params.get('rally') === '2') b.sim.setRally(mq.id, to.x, to.y);
+        else { b.startRally(mq); b.ui.aim.x = to.x; b.ui.aim.y = to.y; }
+      }
+    }
     if (params.has('geninfo')) b.toggleGenInfo(b.sim.generals[0].key);
     b.render(game.canvas.getContext('2d'), game.view, 0.016);
     game.paused = true; // freeze the frame (no pause menu)

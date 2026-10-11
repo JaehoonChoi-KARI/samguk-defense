@@ -3,13 +3,13 @@
 
 import {
   TROOPS, TROOP_KEYS, TROOP_UNLOCK, LORDS, SKILLS, equipFx, cmdPower,
-  leadership, troopLevelMult, startFood, ITEM_KEYS, diffOf, crowdMult,
+  leadership, troopLevelMult, startFood, ITEM_KEYS, diffOf,
   GENERALS, GEN_SPECIALS, GENERAL_PICKS, GENERAL_HP, GENERAL_ATK, generalsOf, weatherKey, stageChallenge, holdsRoad,
 } from './data.js';
 import { stageLayout } from './maps.js';
 import { stageField } from './field.js';
 import { talentFx, skillLevel } from './talents.js';
-import { buildWaves } from './waves.js';
+import { stageWaves } from './waves.js';
 
 // Equipment and talents add up into one set of bonuses.
 export function equipTotals(save) {
@@ -80,7 +80,7 @@ export function fitRoster(save, roster) {
 export function battleSetup(save, stageIdx, stage, opts = {}) {
   const n = stageIdx + 1;
   const layout = stageLayout(n);
-  const waves = buildWaves(stage, n, layout.paths.length, crowdMult(diffOf(save), n));
+  const waves = stageWaves(stage, n, layout.paths.length, diffOf(save));
   const fx = equipTotals(save);
   const tf = LORDS[save.lord].traitFx;
   const troops = {};

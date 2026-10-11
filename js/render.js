@@ -519,6 +519,9 @@ export class BattleView {
           }
           break;
         }
+        case 'rally': // 배치: a squad was told where to stand
+          this.ring(e.x, e.y, 4, 26, '#ffe27a', 0.45);
+          break;
         case 'parry': // 방패벽 catches arrows
           this.fx.push({ k: 'parry', x: e.x, y: e.y - 16, t: 0, life: 0.4 });
           break;
@@ -638,15 +641,30 @@ export class BattleView {
       ctx.lineWidth = 3;
       ctx.setLineDash([6, 5]);
       ctx.beginPath();
-      ctx.moveTo(l.a.hx, l.a.hy);
-      ctx.lineTo(l.b.hx, l.b.hy);
+      ctx.moveTo(l.a.px, l.a.py);
+      ctx.lineTo(l.b.px, l.b.py);
       ctx.stroke();
       ctx.setLineDash([]);
     }
 
-    // melee squads guard the place they were put: a small banner marks it
+    // melee squads guard the place they were put: a small banner marks it. One sent somewhere
+    // else (배치) has a dashed line from its post to the banner.
     for (const q of sim.squads) {
       if (!TROOPS[q.type].melee) continue;
+      if (q.rallied) {
+        ctx.strokeStyle = 'rgba(255,236,170,0.55)';
+        ctx.setLineDash([7, 6]);
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(q.px, q.py);
+        ctx.lineTo(q.hx, q.hy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(q.px, q.py, 5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,236,170,0.8)';
+        ctx.fill();
+      }
       if (Math.hypot(q.x - q.hx, q.y - q.hy) > 14) {
         ctx.strokeStyle = 'rgba(255,255,255,0.3)';
         ctx.setLineDash([4, 5]);
@@ -682,8 +700,25 @@ export class BattleView {
     this.drawFx(ctx, dt);
     if (ui.tutMark) this.drawTutMark(ctx, ui.tutMark);
 
-    // targeting circle
-    if (ui.aim) {
+    // 배치: the area it may stand in, and a dashed line from its post to the finger
+    if (ui.aim?.kind === 'rally' && sim.squads.includes(ui.aim.q)) {
+      const q = ui.aim.q;
+      this.rangeCircle(ctx, q.px, q.py, q.range, '#ffe27a');
+      if (ui.aim.x !== undefined) {
+        let x = ui.aim.x, y = ui.aim.y;
+        const d = Math.hypot(x - q.px, y - q.py);
+        if (d > q.range) { x = q.px + (x - q.px) / d * q.range; y = q.py + (y - q.py) / d * q.range; }
+        ctx.strokeStyle = '#ffe27a';
+        ctx.setLineDash([9, 7]);
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(q.px, q.py);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        this.homeFlag(ctx, x, y, true);
+      }
+    } else if (ui.aim) {
       ctx.beginPath();
       ctx.arc(ui.aim.x, ui.aim.y, ui.aim.r, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(255,220,120,0.18)';

@@ -1,7 +1,7 @@
 // Game rules and numbers: troop types and counters, lords and their orders, equipment,
 // consumable items and growth formulas. Balance knobs live here.
 
-export const VERSION = '1.0.14'; // keep in sync with CACHE in sw.js
+export const VERSION = '1.0.15'; // keep in sync with CACHE in sw.js
 export const STAGE_COUNT = 20;
 export const GATE_HP = 60;
 export const MAX_LORD_LEVEL = 30;
@@ -23,19 +23,19 @@ export const TROOP_KEYS = ['infantry', 'spear', 'cavalry', 'archer', 'strategist
 export const TROOPS = {
   infantry: {
     name: '보병', short: '보병', melee: true, cost: 60, lead: 2,
-    hp: 430, atk: 12, cd: 1.0, range: 85, block: 4, speed: 75, reach: 34,
+    hp: 430, atk: 12, cd: 1.0, range: 125, block: 4, speed: 75, reach: 34,
     trait: { icon: '🛡️', name: '방패벽', dr: 0.12, arrowDr: 0.5, text: '적을 가장 많이 막고, 방패로 받는 피해를 줄여요 (화살은 절반)' },
     desc: '칼과 방패. 길을 막고 오래 버텨요.',
   },
   spear: {
     name: '창병', short: '창병', melee: true, cost: 60, lead: 2,
-    hp: 290, atk: 12, cd: 1.4, range: 90, block: 2, speed: 75, reach: 62,
+    hp: 290, atk: 12, cd: 1.4, range: 125, block: 2, speed: 75, reach: 62,
     trait: { icon: '🔱', name: '긴 창', pierce: 3, text: '창이 길어 공격은 느리지만, 적이 닿기 전에 먼저 찌르고 한 번에 3명까지 꿰뚫어요' },
     desc: '긴 창으로 길을 막아요. 기마병을 잘 막아요.',
   },
   cavalry: {
     name: '기마병', short: '기마', melee: true, cost: 90, lead: 3,
-    hp: 330, atk: 28, cd: 1.1, range: 230, block: 0, speed: 190, reach: 38,
+    hp: 330, atk: 28, cd: 1.1, range: 250, block: 0, speed: 190, reach: 38,
     trait: {
       icon: '🐎', name: '돌격', pass: true, power: 1.6, rest: 0.3, hits: 4, width: 34, over: 90, turn: 0.35,
       text: '길을 막지 않고, 넓은 구역을 달리며 적진을 뚫고 지나가요 (처음 부딪힌 적은 1.6배, 스친 적은 한 번 반격해요)',
@@ -44,21 +44,21 @@ export const TROOPS = {
   },
   archer: {
     name: '궁수', short: '궁수', melee: false, cost: 70, lead: 2,
-    hp: 160, atk: 19, cd: 0.8, range: 200,
+    hp: 160, atk: 16, cd: 0.8, range: 200,
     role: '한 명씩 빠르게',
     trait: { icon: '🏹', name: '속사', text: '0.8초마다 빠르게 쏘고, 노린 적이 먼저 쓰러지면 화살이 옆의 적에게 날아가요' },
     desc: '멀리 있는 적을 빠르게 쏴요.',
   },
   strategist: {
     name: '책사', short: '책사', melee: false, cost: 100, lead: 3,
-    hp: 150, atk: 23, cd: 2.2, range: 180, splash: 52, burn: 0.5, slow: 0.3,
+    hp: 150, atk: 20, cd: 2.2, range: 180, splash: 52, burn: 0.5, slow: 0.3,
     role: '불로 둘레 여럿을',
     trait: { icon: '🔥', name: '화계', text: '불을 던져 둘레의 적까지 태우고(2.5초 더 타요), 맞은 적은 잠깐 느려져요' },
     desc: '책략으로 불을 질러요. 맞은 적은 불타고 느려져요.',
   },
   catapult: {
     name: '투석기', short: '투석', melee: false, cost: 120, lead: 4,
-    hp: 210, atk: 27, cd: 3.2, range: 290, splash: 66,
+    hp: 210, atk: 23, cd: 3.2, range: 290, splash: 66,
     role: '가장 멀리, 여럿을',
     trait: { icon: '🪨', name: '바위 세례', text: '가장 멀리 던져 떨어진 곳의 적을 한꺼번에 때려요. 움직이는 적은 앞을 보고 던져요' },
     desc: '아주 멀리 큰 돌을 던져 여럿을 한꺼번에 때려요.',
@@ -69,6 +69,8 @@ export const TROOPS = {
 // and worth a third of the 군량. A melee squad holds HORDE times as many of them, and the gate is
 // HORDE times as big. The enemy general is not affected. Soldiers are weakest in the first
 // stages, where we have no catapults or strategists to hit a crowd yet.
+// Every enemy, the enemy general and its summons too, has this much more hp (made 10% tougher, 16차).
+export const FOE_HP = 1.1;
 export const HORDE = 3;
 export const HORDE_STATS = { hp: 0.36, hpUp: 0.013, hpMax: 0.56, atk: 0.3, atkUp: 0.006, atkMax: 0.42 };
 export const hordeHp = n => Math.min(HORDE_STATS.hpMax, HORDE_STATS.hp + HORDE_STATS.hpUp * (n - 1));
@@ -446,26 +448,30 @@ export const NO_REWARD_GAP = 2; // lord level ≥ recommended + this → replays
 // (a defence game gets harder with numbers): crowdBase before stage crowdFrom, then rising to
 // crowd at stage 20; or crowdBands, one multiplier for each five stages; or crowdPts,
 // [[stage, multiplier], ...] joined by straight lines. crowdScale then multiplies that for each
-// five stages (보통·어려움·지옥 made 10%p harder everywhere, 14차).
+// five stages (보통·어려움·지옥 made 10%p harder everywhere, 14차). waveCap ([[stage, soldiers]]
+// joined by lines) keeps the biggest waves growing smoothly from stage to stage: a wave above it
+// sends that many soldiers, each one tougher by the same share (17차).
 export const DIFFS = [
   { key: 'easy', name: '쉬움', icon: '🌱', hp: 1.33, atk: 1.2, shp: 1.85, satk: 1.55, gold: 0.85, desc: '적이 약해요. 처음 하는 사람에게 추천' },
-  { key: 'normal', name: '보통', icon: '⚔️', hp: 2.63, atk: 1.79, crowdScale: [1.6, 1.7, 1.7, 1.38], gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
-  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.4, atk: 2.21, crowdPts: [[1, 1], [5, 1.2], [15, 1.2], [20, 1.42]], crowdScale: [2.1, 1.4, 1.4, 1.05], gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
-  { key: 'hell', name: '지옥', icon: '💀', hp: 4.11, atk: 2.58, crowdBands: [2.8, 1.7, 1.6, 1.13], crowdScale: [1.3, 1.13, 1.04, 1.05], gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
+  { key: 'normal', name: '보통', icon: '⚔️', hp: 2.63, atk: 1.79, crowdScale: [1.6, 1.7, 1.7, 1.38], waveCap: [[1, 60], [5, 75], [10, 106], [15, 127], [20, 150]], gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
+  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.4, atk: 2.21, crowdPts: [[1, 1], [5, 1.2], [15, 1.2], [20, 1.42]], crowdScale: [2.1, 1.4, 1.4, 1.05], waveCap: [[1, 50], [4, 80], [5, 85], [10, 110], [15, 125], [20, 155]], gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
+  { key: 'hell', name: '지옥', icon: '💀', hp: 4.11, atk: 2.58, crowdBands: [2.8, 1.7, 1.6, 1.13], crowdScale: [1.3, 1.13, 1.04, 1.05], waveCap: [[1, 85], [5, 95], [10, 105], [15, 115], [20, 135]], gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
 ];
 export const diffOf = save => DIFFS[save?.diff ?? 1] || DIFFS[1];
 export function crowdMult(D, n) {
   return crowdRaw(D, n) * (D?.crowdScale ? D.crowdScale[Math.min(3, Math.floor((n - 1) / 5))] : 1);
 }
-function crowdRaw(D, n) {
-  if (D?.crowdPts) {
-    const p = D.crowdPts;
-    if (n <= p[0][0]) return p[0][1];
-    for (let i = 1; i < p.length; i++) {
-      if (n <= p[i][0]) return p[i - 1][1] + (p[i][1] - p[i - 1][1]) * (n - p[i - 1][0]) / (p[i][0] - p[i - 1][0]);
-    }
-    return p[p.length - 1][1];
+// [[stage, value], ...] joined by straight lines
+function alongPts(p, n) {
+  if (n <= p[0][0]) return p[0][1];
+  for (let i = 1; i < p.length; i++) {
+    if (n <= p[i][0]) return p[i - 1][1] + (p[i][1] - p[i - 1][1]) * (n - p[i - 1][0]) / (p[i][0] - p[i - 1][0]);
   }
+  return p[p.length - 1][1];
+}
+export const waveCap = (D, n) => (D?.waveCap ? Math.round(alongPts(D.waveCap, n)) : Infinity);
+function crowdRaw(D, n) {
+  if (D?.crowdPts) return alongPts(D.crowdPts, n);
   if (D?.crowdBands) return D.crowdBands[Math.min(3, Math.floor((n - 1) / 5))];
   const base = D?.crowdBase || 1, top = D?.crowd || base, from = D?.crowdFrom || 1;
   return n < from ? base : base + (top - base) * (n - from + 1) / (21 - from);

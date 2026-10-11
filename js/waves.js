@@ -1,7 +1,7 @@
 // Enemy waves for a stage, generated from the story's troop mix. Seeded by the stage id,
 // so the same stage always brings the same army (the scouting report stays true).
 
-import { TROOP_KEYS, HORDE } from './data.js';
+import { TROOP_KEYS, HORDE, crowdMult, waveCap } from './data.js';
 
 export function rng(seed) {
   let s = 0;
@@ -39,7 +39,10 @@ function pick(r, weights) {
 // Returns [{ groups: [{ type, count, path, gap, at }], boss: bool }]
 // `at` = seconds after the wave starts when the group begins marching. crowd (from the
 // difficulty) brings more soldiers in bigger, a little denser groups.
-export function buildWaves(stage, n, pathCount, crowd = 1) {
+// The waves of stage n on difficulty D (its crowd and its cap on the biggest waves).
+export const stageWaves = (stage, n, pathCount, D) => buildWaves(stage, n, pathCount, crowdMult(D, n), waveCap(D, n));
+
+export function buildWaves(stage, n, pathCount, crowd = 1, cap = Infinity) {
   const r = rng(stage.id);
   const mix = Object.entries(stage.mix || { infantry: 1 }).filter(([k, w]) => TROOP_KEYS.includes(k) && w > 0);
   const W = waveCount(n);
@@ -72,7 +75,15 @@ export function buildWaves(stage, n, pathCount, crowd = 1) {
         gi++;
       }
     }
-    waves.push({ groups, boss: i === W - 1, length: at });
+    // over the cap: fewer soldiers, each one tougher (boost), marching just as long
+    const size = groups.reduce((a, g) => a + g.count, 0);
+    let boost = 1;
+    if (size > cap) {
+      for (const g of groups) g.count = Math.max(1, Math.round(g.count * cap / size));
+      boost = size / groups.reduce((a, g) => a + g.count, 0);
+      for (const g of groups) g.gap *= boost;
+    }
+    waves.push({ groups, boss: i === W - 1, length: at, boost });
   }
   return waves;
 }

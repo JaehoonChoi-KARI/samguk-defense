@@ -705,6 +705,8 @@ em.up { color: #e07b00; font-style: normal; }
 .pop-hp .bar i { display: block; height: 100%; background: #5be37d; }
 .pop-rel { margin: 6px 0; }
 .pop-btns { display: flex; gap: 8px; }
+.pop-btns + .pop-btns { margin-top: 6px; }
+.pbtn.rally { background: #fff3c4; }
 .pbtn { flex: 1; white-space: nowrap; border: none; border-radius: 12px; min-height: 52px; font-size: 16px; font-weight: 900; padding: 6px 10px; box-shadow: 0 3px 0 #9c7c48; background: #f6ead0; color: var(--ink); }
 .pbtn.promote { background: linear-gradient(180deg, #f6c94e, #d89e1c); }
 .pbtn.no-food { opacity: 0.5; }

@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>crowd</title>
+</head>
+<body>
+<pre id="out">running...</pre>
+<script type="module">
+// How many soldiers each stage sends: for every difficulty, story and stage, the biggest wave
+// (soldiers, the enemy general not counted) and the whole stage. Prints JSON rows.
+import { STORIES } from '../js/stories.js';
+import { DIFFS } from '../js/data.js';
+import { stageWaves } from '../js/waves.js';
+import { stageLayout } from '../js/maps.js';
+
+const rows = [];
+DIFFS.forEach((D, d) => {
+  for (const [lord, S] of Object.entries(STORIES)) {
+    S.stages.forEach((stage, i) => {
+      const n = i + 1;
+      const ws = stageWaves(stage, n, stageLayout(n).paths.length, D);
+      const sizes = ws.map(w => w.groups.reduce((a, g) => a + g.count, 0));
+      rows.push({ d, lord, n, max: Math.max(...sizes), total: sizes.reduce((a, b) => a + b, 0), waves: sizes.length });
+    });
+  }
+});
+document.getElementById('out').textContent = JSON.stringify(rows);
+</script>
+</body>
+</html>

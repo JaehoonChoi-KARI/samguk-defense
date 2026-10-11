@@ -7,10 +7,10 @@ import {
   TROOPS, FOES, STAR_MULT, STAR_RANGE, STAR_COST, RETREAT_REFUND, GATE_HP, counterMult, counterLevel, BOSS,
   SKILLS, ITEMS, stageHpMult, stageAtkMult, killFood, PASSIVE_FOOD, TROOP_KEYS, diffScale,
   GENERALS, GEN_SPECIALS, GENERAL_RECOVER, GENERAL_MOVE_WAIT, GROUND, FORMATIONS,
-  WEATHER, DUEL, duelChance, ROUT, skillDur, startFood, AURA_R, HORDE, hordeHp, hordeAtk, holdsRoad,
+  WEATHER, DUEL, duelChance, ROUT, skillDur, startFood, AURA_R, HORDE, hordeHp, hordeAtk, holdsRoad, FOE_HP,
 } from './data.js';
 import { pathAt, nearestOnPaths, WORLD_W, WORLD_H } from './maps.js';
-import { cellKey, sizeOf, anchorAt, footCenter, footCells, footNeighbours } from './field.js';
+import { cellKey, sizeOf, anchorAt, footCenter, footCells, footNeighbours, inWater } from './field.js';
 import { rng } from './waves.js';
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -31,7 +31,7 @@ export class Sim {
     this.waves = setup.waves;
     this.r = rng(`${setup.seed || 'battle'}:${setup.stage.id}`);
     const D = setup.diff || { hp: 1, atk: 1 };
-    this.hpMult = stageHpMult(this.n) * diffScale(D.hp, this.n);
+    this.hpMult = stageHpMult(this.n) * diffScale(D.hp, this.n) * FOE_HP; // the bomb item scales with it too
     this.atkMult = stageAtkMult(this.n) * diffScale(D.atk, this.n);
     this.soldier = { hp: D.shp || 1, atk: D.satk || 1 }; // a difficulty can toughen the soldiers alone
     this.mods = setup.mods;
@@ -108,7 +108,7 @@ export class Sim {
   // 군주의 위엄: squads put close to the castle fight harder.
   nearLord(u) {
     const g = this.layout.gate;
-    return Math.hypot((u.hx ?? u.x) - g.x, (u.hy ?? u.y) - g.y) < AURA_R;
+    return Math.hypot((u.px ?? u.x) - g.x, (u.py ?? u.y) - g.y) < AURA_R;
   }
 
   starCost(squad) {
@@ -209,12 +209,13 @@ export class Sim {
 
   // Forest squads at their post cannot be seen by enemy archers, catapults and raiders.
   hidden(a) {
-    return a.kind === 'squad' && a.ground === 'forest' && Math.hypot(a.x - a.hx, a.y - a.hy) < 24;
+    return a.kind === 'squad' && a.ground === 'forest' && !a.rallied && Math.hypot(a.x - a.px, a.y - a.py) < 24;
   }
 
   newSquad(fields, x, y) {
     return {
-      kind: 'squad', id: this.nextId++, star: 1, x, y, hx: x, hy: y,
+      // px, py = its post (the cell it was put on); hx, hy = where it stands and guards around
+      kind: 'squad', id: this.nextId++, star: 1, x, y, hx: x, hy: y, px: x, py: y, rallied: false,
       cdT: 0.3, blocking: [], lastHit: -99, atkAnim: 0, face: 1, target: null, chase: null, moving: false, walkT: 0,
       ...fields,
     };
@@ -253,7 +254,7 @@ export class Sim {
   // Base numbers plus the ground under the unit and its formations. Gaining max HP heals by
   // the same amount; losing it only trims.
   refreshStats(s) {
-    const B = s.base, G = GROUND[s.ground] || GROUND.plain, F = s.form || {};
+    const B = s.base, G = (!s.rallied && GROUND[s.ground]) || GROUND.plain, F = s.form || {}; // off its cell: no ground bonus
     const ranged = !TROOPS[s.type].melee;
     const oldMax = s.maxHp;
     s.maxHp = B.maxHp * (1 + (F.hp || 0));
@@ -357,6 +358,29 @@ export class Sim {
     this.stats.promoted++;
     this.emit({ k: 'promote', x: s.x, y: s.y, star: s.star });
     return { ok: true };
+  }
+
+  // A melee squad or general can be told where to stand (배치): any point inside its area around
+  // its post, the road too. It walks there and guards around that point; it keeps its cell, so
+  // its formations stay, but the cell's ground (choke, forest) only helps while it is on it.
+  setRally(squadId, x, y) {
+    const s = this.squads.find(q => q.id === squadId);
+    if (!s || !TROOPS[s.type].melee) return { ok: false, reason: 'type' };
+    const dx = x - s.px, dy = y - s.py, d = Math.hypot(dx, dy);
+    if (d > s.range) { x = s.px + dx / d * s.range; y = s.py + dy / d * s.range; }
+    x = Math.max(12, Math.min(WORLD_W - 12, x));
+    y = Math.max(12, Math.min(WORLD_H - 12, y));
+    if (inWater(this.field.water, x, y)) return { ok: false, reason: 'water' };
+    const away = Math.hypot(x - s.px, y - s.py) > 24;
+    s.hx = away ? x : s.px;
+    s.hy = away ? y : s.py;
+    s.rallied = away;
+    if (away) s.ambush = false;
+    s.chase = null;
+    s.pass = null;
+    this.refreshStats(s);
+    this.emit({ k: 'rally', x: s.hx, y: s.hy });
+    return { ok: true, x: s.hx, y: s.hy };
   }
 
   retreat(squadId) {
@@ -508,7 +532,7 @@ export class Sim {
     this.nextT = null;
     const q = [];
     for (const g of w.groups) {
-      for (let k = 0; k < g.count; k++) q.push({ t: g.at + k * g.gap, type: g.type, path: Math.min(g.path, this.paths.length - 1) });
+      for (let k = 0; k < g.count; k++) q.push({ t: g.at + k * g.gap, type: g.type, path: Math.min(g.path, this.paths.length - 1), boost: w.boost || 1 });
     }
     if (w.boss) q.push({ t: Math.max(4, w.length * 0.45), type: this.setup.stage.boss.type, path: 0, boss: true });
     q.sort((a, b) => a.t - b.t);
@@ -516,17 +540,18 @@ export class Sim {
     this.emit({ k: 'wave', i, boss: w.boss });
   }
 
-  spawnFoe(type, pathIdx, boss = false, d = 0) {
+  // boost: a capped wave sends fewer soldiers, each worth this many (hp, 군량, gate damage)
+  spawnFoe(type, pathIdx, boss = false, d = 0, boost = 1) {
     const F = FOES[type];
     const path = this.paths[pathIdx];
     // the horde: many weaker soldiers (the enemy general is left alone)
-    const H = boss ? { hp: 1, atk: 1 } : { hp: hordeHp(this.n) * this.soldier.hp, atk: hordeAtk(this.n) * this.soldier.atk };
+    const H = boss ? { hp: 1, atk: 1 } : { hp: hordeHp(this.n) * this.soldier.hp * boost, atk: hordeAtk(this.n) * this.soldier.atk };
     const f = {
       kind: 'foe', id: this.nextId++, type, boss, path: pathIdx, d,
       off: (this.r() - 0.5) * 30, x: 0, y: 0,
       hp: F.hp * this.hpMult * H.hp, atk: F.atk * this.atkMult * H.atk, cd: F.cd, cdT: 0.5 + this.r() * 0.5,
       speed: F.speed * (0.93 + this.r() * 0.14), range: (F.range || 0) * (this.weather.range || 1),
-      gate: F.gate, reward: killFood(type, this.n) / (boss ? 1 : HORDE),
+      gate: F.gate * (boss ? 1 : boost), reward: killFood(type, this.n) / (boss ? 1 : HORDE) * (boss ? 1 : boost),
       state: 'walk', blocker: null, raid: null, raidCd: 0,
       slowT: 0, slow: 0, burnT: 0, burnDps: 0, stunT: 0, rallyT: 0, healT: 1 + this.r() * 2,
       cmT: 0, face: 1, walkT: this.r() * 10, atkAnim: 0, chargeT: 0,
@@ -564,7 +589,7 @@ export class Sim {
     this.waveT += dt;
     while (this.spawnQueue.length && this.spawnQueue[0].t <= this.waveT) {
       const s = this.spawnQueue.shift();
-      this.spawnFoe(s.type, s.path, !!s.boss);
+      this.spawnFoe(s.type, s.path, !!s.boss, 0, s.boost || 1);
     }
     const lastWave = this.waveIdx >= this.waves.length - 1;
     if (!this.spawnQueue.length && !lastWave) {

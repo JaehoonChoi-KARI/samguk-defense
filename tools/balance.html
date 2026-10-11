@@ -15,8 +15,8 @@
 //   &talents=plan|troop|none (how the lord's talent points are spent)  &fhp= &fatk= (horde soldier hp / atk)
 //   &naive=1 (the bot places without a plan: no road joins, choke or hill cells, formations)
 import { STORIES } from '../js/stories.js';
-import { buildWaves, WAVE_TUNE } from '../js/waves.js';
-import { HORDE_STATS, DIFFS, crowdMult, TROOPS } from '../js/data.js';
+import { stageWaves, WAVE_TUNE } from '../js/waves.js';
+import { HORDE_STATS, DIFFS, TROOPS } from '../js/data.js';
 import { stageLayout } from '../js/maps.js';
 import { battleSetup } from '../js/army.js';
 import { Sim } from '../js/sim.js';
@@ -66,7 +66,7 @@ for (const lord of lords) {
     let peak = 0;
     for (let r = 0; r < runs; r++) {
       const s = expectedSave(lord, n, diff, { levelBonus: lvl, troopBonus: troop, talents });
-      const ws = buildWaves(stage, n, stageLayout(n).paths.length, crowdMult(DIFFS[diff], n));
+      const ws = stageWaves(stage, n, stageLayout(n).paths.length, DIFFS[diff]);
       s.roster = recommendRoster(s, ws);
       s.picks = P.get('gens') === '0' ? [] : recommendGenerals(s, ws);
       const setup = battleSetup(s, n - 1, stage, { seed: `bal${r}` });
@@ -90,7 +90,7 @@ for (const lord of lords) {
       }
       if (sim.state === 'play') stalls.unshift('STALLED');
     }
-    const wv = buildWaves(stage, n, stageLayout(n).paths.length, crowdMult(DIFFS[diff], n));
+    const wv = stageWaves(stage, n, stageLayout(n).paths.length, DIFFS[diff]);
     rows.push({ lord, n, title: stage.title, win: won / runs, gate: +(gate / runs).toFixed(1), time: Math.round(time / runs), lost: +(lost / runs).toFixed(1), leaked: +(leaked / runs).toFixed(1), boss: bossLoss, peak, waves: wv.length, march: Math.round(wv.reduce((s, w) => s + w.length, 0)), ...(stalls.length ? { stalls } : {}) });
   }
 }

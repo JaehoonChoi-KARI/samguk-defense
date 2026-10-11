@@ -5,7 +5,7 @@ import {
   VERSION, GATE_HP, HORDE, TROOPS, TROOP_KEYS, STRONG, STRONG_WHY, LORDS, LORD_KEYS, SKILLS, SKILL_UNLOCK, EQUIPS, GRADES, SLOTS,
   ITEMS, ITEM_KEYS, ITEM_CARRY_MAX, FACTIONS, TROOP_UNLOCK, BOSS_SKILLS, MAX_TROOP_LEVEL, MAX_ENHANCE,
   STAGE_COUNT, troopUpCost, enhanceCost, equipFx, fxText, expNeed, recLevel, stageGold, fmt, weakTo, pct,
-  DIFFS, diffOf, crowdMult, GENERALS, GEN_SPECIALS, GENERAL_PICKS, COUNTER_MARK, COUNTER_NAME, COUNTER_MULT, relations, bestLevel, RING,
+  DIFFS, diffOf, GENERALS, GEN_SPECIALS, GENERAL_PICKS, COUNTER_MARK, COUNTER_NAME, COUNTER_MULT, relations, bestLevel, RING,
   generalsOf, WEATHER, weatherKey, stageChallenge, challengeGold, GROUND, FORMATIONS, holdsRoad,
 } from './data.js';
 import { PLACES } from './maps.js';
@@ -16,7 +16,7 @@ import {
   addTalent, removeTalent, resetTalents, autoTalents, skillLevel,
 } from './talents.js';
 import { equipTotals, troopStats, lordLeadership, rosterLead, troopUnlocked, skillList, fitRoster, unlockedGenerals, pickedGenerals, generalStats, generalUnlocked } from './army.js';
-import { buildWaves, stageSummary } from './waves.js';
+import { stageWaves, stageSummary } from './waves.js';
 import { stageLayout } from './maps.js';
 import { stageField } from './field.js';
 import { noReward } from './progression.js';
@@ -445,7 +445,7 @@ function prepScreen(game, { stageIdx }) {
   const st = story.stages[stageIdx];
   const n = stageIdx + 1;
   const layoutN = stageLayout(n);
-  const waves = buildWaves(st, n, layoutN.paths.length, crowdMult(diffOf(s), n));
+  const waves = stageWaves(st, n, layoutN.paths.length, diffOf(s));
   const sum = stageSummary(waves);
   const them = FACTIONS[st.enemy] || FACTIONS.yellow;
   const foeTypes = TROOP_KEYS.filter(t => sum[t]).sort((a, b) => sum[b] - sum[a]);
@@ -1009,6 +1009,7 @@ function countersScreen(game, arg = {}) {
           <div class="g-line">🌬️ <b>날씨</b> <small>동남풍은 불이 2배, 비는 불이 약해져요. 안개와 밤은 사거리가 줄어요</small></div>
           <div class="g-line">🎯 <b>도전 과제</b> <small>지역마다 하나씩, 처음 해내면 골드를 더 받아요</small></div>
           <div class="g-line">🛣️ <b>여러 갈래 길</b> <small>길이 하나로 합쳐지는 곳을 막으면 한 부대로 모든 길을 막아요</small></div>
+          <div class="g-line">📍 <b>근접 부대 배치</b> <small>놓은 근접 부대를 누르고 📍 배치를 누른 뒤 설 곳을 누르면, 진지에서 점선 원 안 어디든(길 위도) 가서 지켜요</small></div>
         </div>
       </div>
     </div>`);
@@ -1046,7 +1047,7 @@ function resultScreen(game, { r, out }) {
   for (const t of out.unlocked) lines.push(`<div class="rw big">${troopImg(s, t, 40)} 새 병종: <b>${TROOPS[t].name}</b>! <small>병영과 정비에서 쓸 수 있어요</small></div>`);
   let tip = '';
   if (!r.won) {
-    const sum = stageSummary(buildWaves(st, r.stageIdx + 1, stageLayout(r.stageIdx + 1).paths.length, crowdMult(diffOf(s), r.stageIdx + 1)));
+    const sum = stageSummary(stageWaves(st, r.stageIdx + 1, stageLayout(r.stageIdx + 1).paths.length, diffOf(s)));
     const topT = TROOP_KEYS.filter(t => sum[t]).sort((a, b) => sum[b] - sum[a])[0];
     tip = r.reason === 'boss' ? `💡 적장 <b>${st.boss.name}</b>이(가) 성문을 넘으면 바로 져요. 적장은 가까이 있는 우리 부대와 먼저 싸우니, 적장이 지나가는 길목에 강한 부대와 장수를 모으고, 군주 스킬과 벽력탄·목책을 아껴 두었다가 적장에게 쓰세요. 적장은 <b>${TROOPS[st.boss.type].name}</b>이라 ${weakTo(st.boss.type).map(t => TROOPS[t].name).join(', ')}이(가) 강해요.` : `💡 이번 적은 <b>${TROOPS[topT].name}</b>이 많았어요. ${weakTo(topT).map(t => TROOPS[t].name).join(', ')}이(가) 강해요. 병영에서 병종을 강화하거나, 아이템을 챙겨 보세요.`;
   }
