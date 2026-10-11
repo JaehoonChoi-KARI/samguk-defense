@@ -1,7 +1,7 @@
 // Offline support. Online: always ask the server first, so a new version shows up on the
 // very next launch. Offline (or a server slower than 4s): use the cached copy.
 
-const CACHE = 'samguk-td-1.0.7'; // keep in sync with VERSION in js/data.js
+const CACHE = 'samguk-td-1.0.8'; // keep in sync with VERSION in js/data.js
 const ASSETS = [
   './',
   './index.html',
@@ -26,6 +26,7 @@ const ASSETS = [
   './js/music.js',
   './js/device.js',
   './js/talents.js',
+  './js/tutorial.js',
   './js/field.js',
   './js/lore/liubei.js',
   './js/lore/caocao.js',

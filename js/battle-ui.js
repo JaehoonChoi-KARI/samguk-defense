@@ -16,7 +16,8 @@ import { battleSetup } from './army.js';
 import { troopIcon, generalIcon } from './sprites.js';
 import { sfx } from './audio.js';
 import { waveSummary } from './waves.js';
-import { tapWord, dragHow } from './device.js';
+import { tapWord } from './device.js';
+import { Tutorial } from './tutorial.js';
 import { DUEL } from './data.js';
 
 // Was the stage's challenge met in this (won) battle?
@@ -42,8 +43,12 @@ function h(html) {
   return t.content.firstElementChild;
 }
 
-const LORD_TAP = 48;
 const SQUAD_TAP = 36;
+// 2:05 for a long wait, 45초 for a short one
+const clock = sec => {
+  const t = Math.ceil(sec);
+  return t >= 60 ? `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}` : `${t}초`;
+};
 const DRAG_START = 12; // px a finger must move before a list press becomes a drag
 
 const PLACE_ERR = {
@@ -63,17 +68,19 @@ export class BattleController {
     this.sim = new Sim(this.setup);
     this.view = new BattleView(this.sim);
     this.us = FACTIONS[LORDS[game.save.lord].faction];
-    this.ui = { squad: null, aim: null, lordDrag: null, preview: null, ghost: null };
+    this.ui = { squad: null, aim: null, preview: null, ghost: null };
     this.sel = null; // { kind: 'troop', type } | { kind: 'gen', key }
     this.speed = game.prefs.speed === 2 ? 2 : 1;
     this.ended = false;
     this.endT = 0;
-    this.tutorial = stageIdx === 0 && !game.save.seen.tutorial ? 1 : 0;
     this.hudCache = {};
     this.root = game.hudRoot;
     this.buildHud();
     this.bindInput();
-    this.refreshTutorial();
+    // the first stage teaches the game step by step (until it has been seen once, or on request)
+    const teach = opts.tutorial ?? (stageIdx === 0 && !game.save.seen.tutorial);
+    this.tut = teach ? new Tutorial(this) : null;
+    this.sfxStep = () => sfx.select();
   }
 
   // ---- HUD ----------------------------------------------------------------------------
@@ -131,7 +138,7 @@ export class BattleController {
           ${skills.map((key, i) => `
             <button class="sbtn" data-i="${i}" type="button">
               <span class="ico">${SKILLS[key].icon}</span><span class="nm">${SKILLS[key].name}</span>
-              <i class="cd"></i><span class="lock">🔒 Lv${SKILL_UNLOCK[i]}</span>
+              <i class="cd"></i><b class="cdt"></b><span class="lock">🔒 Lv${SKILL_UNLOCK[i]}</span>
             </button>`).join('')}
         </div>
         <div class="aim-hint hidden"><span class="txt"></span><button type="button" class="aim-cancel">취소</button></div>
@@ -216,8 +223,7 @@ export class BattleController {
       this.set('wpCall', '.wp-call', call);
     }
 
-    // skills and items
-    const L = sim.lord;
+    // the lord's orders: a running order shows its time left, then the wait until it is back
     sim.skills.forEach((s, i) => {
       const b = this.el.querySelector(`.sbtn[data-i="${i}"]`);
       const locked = !s;
@@ -225,9 +231,10 @@ export class BattleController {
       if (locked) return;
       const frac = s.cdT > 0 ? s.cdT / s.cd : 0;
       b.querySelector('.cd').style.height = `${frac * 100}%`;
-      b.classList.toggle('ready', frac === 0 && !L.dead);
-      b.classList.toggle('dim', L.dead);
+      b.classList.toggle('ready', frac === 0);
+      b.classList.toggle('active', s.activeT > 0);
       b.classList.toggle('aiming', this.ui.aim?.kind === 'skill' && this.ui.aim.i === i);
+      this.set(`skillT${i}`, `.sbtn[data-i="${i}"] .cdt`, s.activeT > 0 ? `${Math.ceil(s.activeT)}초` : s.cdT > 0 ? clock(s.cdT) : '');
     });
     for (const b of this.el.querySelectorAll('.ibtn')) {
       const k = b.dataset.k;
@@ -261,31 +268,6 @@ export class BattleController {
     this.toastT = setTimeout(() => t.classList.add('hidden'), 1600);
   }
 
-  // ---- tutorial (first stage only) ------------------------------------------------------
-
-  refreshTutorial() {
-    const el = this.$('.tut');
-    if (!this.tutorial) { el.classList.add('hidden'); return; }
-    let text = '';
-    if (this.tutorial === 1) text = `👉 <b>오른쪽 목록</b>에서 부대를 고르고, 길 옆을 ${tapWord()}하세요. 누른 채로 움직이면 사거리를 보며 자리를 고를 수 있어요. <b>장수</b>는 무료!`;
-    else if (this.tutorial === 2) text = '좋아요! 부대를 하나 더 놓고, 준비가 되면 위의 <b>⚔ 전투 시작!</b>을 누르세요.';
-    else if (this.tutorial === 3) text = `👆 <b>군주</b>를 ${dragHow()} 끌어서 옮길 수 있어요. 군주도 직접 싸워요!`;
-    else if (this.tutorial === 4) text = `오른쪽 아래 <b>스킬</b>, 왼쪽 아래 <b>아이템</b>을 눌러 보세요. 위치를 고르는 건 화면을 ${tapWord()}!`;
-    else if (this.tutorial === 5) text = '놓은 부대를 누르면 <b>승급</b>(더 강하게)하거나 <b>철수</b>할 수 있어요.';
-    el.innerHTML = text;
-    el.classList.toggle('hidden', !text);
-  }
-
-  advanceTutorial(step) {
-    if (!this.tutorial || this.tutorial !== step) return;
-    this.tutorial++;
-    if (this.tutorial > 5) {
-      this.tutorial = 0;
-      this.game.save.seen.tutorial = true;
-      this.game.persist();
-    }
-    this.refreshTutorial();
-  }
 
   // ---- the unit list (inventory) ----------------------------------------------------------
 
@@ -453,6 +435,7 @@ export class BattleController {
     this.ui.ghost = {
       x: spot.x, y: spot.y, r, type: info.type, gen: info.gen, letter: info.letter, melee: !ranged, ok,
       c: spot.c, row: spot.r, size: spot.size, ground: groundOn ? spot.ground : null, forms,
+      aura: !!(spot.ok && this.sim.mods.aura && this.sim.nearLord(spot)),
     };
   }
 
@@ -469,8 +452,6 @@ export class BattleController {
     }
     if (s.kind === 'gen') sfx.horn(); else sfx.deploy();
     this.select(null);
-    if (this.tutorial === 1) this.advanceTutorial(1);
-    else if (this.tutorial === 2 && this.sim.squads.length >= 2) this.refreshTutorial();
     return true;
   }
 
@@ -502,14 +483,6 @@ export class BattleController {
         this.ptr.mode = 'aim';
         this.ui.aim.x = w.x;
         this.ui.aim.y = w.y;
-        return;
-      }
-      const L = this.sim.lord;
-      if (!L.dead && Math.hypot(w.x - L.x, w.y - (L.y - 20)) < LORD_TAP) {
-        this.ptr.mode = 'lord';
-        this.closePopup();
-        this.ui.lordDrag = { x: L.x, y: L.y };
-        this.setCursor('grabbing');
       }
     };
     this.onMove = e => {
@@ -523,26 +496,15 @@ export class BattleController {
       p.w = w;
       if (p.mode === 'place') this.ghostAt(w);
       if (p.mode === 'aim' && this.ui.aim) { this.ui.aim.x = w.x; this.ui.aim.y = w.y; }
-      if (p.mode === 'lord') this.ui.lordDrag = { x: w.x, y: w.y };
     };
     this.onUp = e => {
       const p = this.ptr;
       if (!p || p.id !== e.pointerId) return;
       this.ptr = null;
-      if (e.type === 'pointercancel') { this.ui.lordDrag = null; this.ui.ghost = null; return; }
+      if (e.type === 'pointercancel') { this.ui.ghost = null; return; }
       const w = this.view.toWorld(e.clientX, e.clientY);
       if (p.mode === 'place') { this.tryPlace(w); return; }
       if (p.mode === 'aim') { this.fireAim(w); return; }
-      if (p.mode === 'lord') {
-        this.ui.lordDrag = null;
-        this.setCursor('grab');
-        if (p.moved) {
-          this.sim.moveLord(w.x, w.y);
-          sfx.select();
-          this.advanceTutorial(3);
-        }
-        return;
-      }
       this.tap(w);
     };
     this.onLeave = () => {
@@ -579,10 +541,8 @@ export class BattleController {
       this.ui.aim.x = w.x;
       this.ui.aim.y = w.y;
       cursor = 'crosshair';
-    } else {
-      const L = this.sim.lord;
-      if (!L.dead && Math.hypot(w.x - L.x, w.y - (L.y - 20)) < LORD_TAP) cursor = 'grab';
-      else if (this.squadAt(w)) cursor = 'pointer';
+    } else if (this.squadAt(w)) {
+      cursor = 'pointer';
     }
     this.setCursor(cursor);
   }
@@ -628,12 +588,7 @@ export class BattleController {
     if (this.genInfoKey) this.closeGenInfo();
     const squad = this.squadAt(w);
     if (squad) { this.openSquad(squad); return; }
-    if (this.popupKind) { this.closePopup(); return; }
-    // tapping open ground sends the lord there
-    if (this.sim.moveLord(w.x, w.y)) {
-      sfx.select();
-      this.advanceTutorial(3);
-    }
+    if (this.popupKind) this.closePopup();
   }
 
   // ---- unit menu ---------------------------------------------------------------------------
@@ -676,6 +631,7 @@ export class BattleController {
     const works = q.ground === 'forest' || (q.ground === 'hill' && ranged) || (q.ground === 'choke' && !ranged);
     if (q.ground !== 'plain') out.push(`<div class="pop-ground">${G.icon} <b>${G.name}</b>: ${works ? G.text : '이 병종에게는 효과가 없어요'}</div>`);
     for (const f of q.form?.names || []) out.push(`<div class="pop-form">${FORMATIONS[f].icon} <b>${FORMATIONS[f].name}</b>: ${FORMATIONS[f].text}</div>`);
+    if (this.sim.mods.aura && this.sim.nearLord(q)) out.push(`<div class="pop-form">🏯 <b>군주의 위엄</b>: 성 가까이 있어서 공격 +${Math.round(this.sim.mods.aura * 100)}%</div>`);
     return out.join('');
   }
 
@@ -710,7 +666,6 @@ export class BattleController {
         const r = this.sim.promote(q.id);
         if (r.ok) {
           sfx.upgrade();
-          this.advanceTutorial(5);
           this.openSquad(q);
         } else {
           sfx.denied();
@@ -816,8 +771,7 @@ export class BattleController {
     const s = this.sim.skills[i];
     if (!s) { sfx.denied(); this.toast(`군주 레벨 ${SKILL_UNLOCK[i]}에 배워요`); return; }
     if (this.ui.aim?.kind === 'skill' && this.ui.aim.i === i) { this.setAim(null); sfx.select(); return; }
-    if (this.sim.lord.dead) { sfx.denied(); this.toast('군주가 돌아오면 쓸 수 있어요'); return; }
-    if (s.cdT > 0) { sfx.denied(); this.toast(`${Math.ceil(s.cdT)}초 뒤에 쓸 수 있어요`); return; }
+    if (s.cdT > 0) { sfx.denied(); this.toast(`${SKILLS[s.key].name}: ${clock(s.cdT)} 뒤에 다시 쓸 수 있어요`); return; }
     const def = SKILLS[s.key];
     if (def.target === 'self') {
       this.castSkill(i, 0, 0);
@@ -836,8 +790,7 @@ export class BattleController {
       return false;
     }
     const key = this.sim.skills[i].key;
-    ({ lb_whirl: sfx.spin, lb_heal: sfx.heal, lb_militia: sfx.drum, cc_dash: sfx.dash, cc_roar: sfx.horn, cc_cavalry: sfx.smash, sq_rain: sfx.bow, sq_fire: sfx.fireball, sq_guard: sfx.upgrade }[key] || sfx.confirm)();
-    this.advanceTutorial(4);
+    ({ lb_heal: sfx.heal, lb_oath: sfx.horn, lb_militia: sfx.drum, cc_roar: sfx.horn, cc_supply: sfx.upgrade, cc_tiger: sfx.smash, sq_volley: sfx.bow, sq_fire: sfx.fireball, sq_guard: sfx.upgrade }[key] || sfx.confirm)();
     return true;
   }
 
@@ -869,7 +822,6 @@ export class BattleController {
       if (!ok) { sfx.denied(); this.toast(r.reason === 'path' ? '길 위를 골라 주세요' : '쓸 수 없어요'); }
       else {
         ({ potion: sfx.heal, bomb: sfx.explode, wall: sfx.deploy })[aim.k]();
-        this.advanceTutorial(4);
       }
     }
     if (ok) this.setAim(null);
@@ -881,13 +833,16 @@ export class BattleController {
     if (!r.ok) return;
     sfx.drum();
     if (r.bonus) this.toast(`일찍 출격! +${r.bonus}🌾`);
-    if (this.tutorial === 2) this.advanceTutorial(2);
   }
 
   // ---- frame -----------------------------------------------------------------------------
 
   update(dt) {
     const sim = this.sim;
+    if (this.tut && !this.ended) {
+      this.tut.update();
+      if (this.tut.holding) { this.handleEvents(); return; } // the battle waits for the step
+    }
     const steps = this.speed === 2 ? 2 : 1;
     for (let i = 0; i < steps; i++) sim.update(dt);
     this.game.save.playSec += dt;
@@ -929,6 +884,7 @@ export class BattleController {
       duels: sim.stats.duels,
       duelWins: sim.stats.duelWins,
       routed: sim.stats.routed,
+      tutorial: !!(this.tut && this.tut.finished && !this.tut.skipped),
     };
   }
 
@@ -941,7 +897,6 @@ export class BattleController {
         case 'wave':
           sfx.horn();
           this.banner(e.boss ? `마지막 웨이브! 적장 ${this.stage.boss.name}을(를) 놓치면 패배!` : `웨이브 ${e.i + 1}`, e.boss ? 'boss' : '', 2400);
-          if (this.tutorial === 2) this.advanceTutorial(2);
           break;
         case 'boss': sfx.boss(); break;
         case 'leak': sfx.gateHit(); break;
@@ -949,7 +904,11 @@ export class BattleController {
         case 'die': if (e.boss) sfx.crit(); else sfx.hit(); break;
         case 'squadDown': sfx.squadDown(); break;
         case 'generalDown': sfx.hurt(); break;
-        case 'lordDown': sfx.hurt(); break;
+        case 'order': {
+          const def = SKILLS[e.key];
+          this.banner(`👑 ${LORDS[this.sim.setup.lordKey].name}의 명령: ${def.icon} ${def.name}!${e.amount ? ` 군량 +${e.amount}` : ''}`, 'good', 1800);
+          break;
+        }
         case 'bow': sfx.bow(); break;
         case 'launch': sfx.stone(); break;
         case 'boom': if (!e.big) sfx.smash(); break;
@@ -979,8 +938,6 @@ export class BattleController {
       }
     }
     this.sim.events = [];
-    if (this.tutorial === 3 && this.sim.waveIdx >= 0 && this.sim.time > 25) this.advanceTutorial(3);
-    if (this.tutorial === 4 && this.sim.time > 60) this.advanceTutorial(4);
   }
 
   render(ctx, view, dt) {

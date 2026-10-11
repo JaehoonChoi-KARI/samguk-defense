@@ -147,17 +147,6 @@ export class Bot {
 
   decide() {
     const sim = this.sim;
-    if (!this.posted) {
-      const p = pathAt(sim.paths[0], sim.paths[0].len * 0.72);
-      sim.moveLord(p.x, p.y);
-      this.posted = true;
-    }
-    const boss = this.bossFocus ? sim.boss() : null;
-    if (boss && !sim.lord.dead) {
-      const p = sim.paths[boss.path];
-      const ahead = pathAt(p, Math.min(p.len - 50, Math.max(boss.d + 70, p.len * 0.55)));
-      if (Math.hypot(sim.lord.hx - ahead.x, sim.lord.hy - ahead.y) > 60 && boss.d < p.len - 60) sim.moveLord(ahead.x, ahead.y);
-    }
     // generals first: they are free
     for (const g of sim.generals) {
       if (g.state !== 'hand' || g.waitT > 0) continue;
@@ -197,31 +186,56 @@ export class Bot {
     return { at: best, n: bn };
   }
 
+  // The lord's orders come back slowly (3 minutes, about four waves), so the bot keeps them for
+  // the enemy general's wave unless one used now would be back in time, or the gate is in danger.
   skills() {
     const sim = this.sim;
-    const L = sim.lord;
-    if (L.dead) return;
+    const boss = this.bossFocus ? sim.boss() : null;
+    const bossNear = boss && boss.state !== 'flee' && boss.d > sim.paths[boss.path].len * 0.35;
+    const fighting = sim.foes.filter(f => f.state !== 'flee').length;
+    const spare = sim.totalWaves - 1 - sim.waveIdx >= 4; // it comes back before the last wave
+    const danger = sim.gate <= 12 || sim.foes.filter(f => f.state === 'walk' && f.d > sim.paths[f.path].len * 0.85).length >= 5;
+    const busy = bossNear || danger || (spare && fighting >= 10 + sim.n * 0.4);
     sim.skills.forEach((s, i) => {
       if (!s || s.cdT > 0) return;
       const def = SKILLS[s.key];
+      switch (s.key) {
+        case 'lb_heal': {
+          const hurt = sim.squads.filter(q => q.hp < q.maxHp * 0.5).length;
+          if ((hurt >= 3 && (spare || danger)) || (bossNear && hurt >= 1)) sim.castSkill(i, 0, 0);
+          return;
+        }
+        case 'lb_oath': {
+          const down = sim.generals.some(g => g.state === 'hand' && g.waitT > 6);
+          const near = boss && sim.squads.some(q => q.gen && Math.hypot(q.x - boss.x, q.y - boss.y) < 300);
+          if ((down && (spare || bossNear)) || near) sim.castSkill(i, 0, 0);
+          return;
+        }
+        case 'cc_supply': {
+          const want = TROOP_KEYS.some(t => sim.roster[t] > 0) || sim.squads.some(q => sim.starCost(q) !== null);
+          if (sim.waveIdx >= 0 && want && sim.food < 80) sim.castSkill(i, 0, 0);
+          return;
+        }
+        default:
+          break;
+      }
       if (def.target === 'self') {
-        if (s.key === 'lb_heal') {
-          const hurt = sim.squads.filter(q => q.hp < q.maxHp * 0.6).length + (L.hp < L.maxHp * 0.5 ? 2 : 0);
-          if (hurt >= 2) sim.castSkill(i, 0, 0);
-        } else if (s.key === 'lb_whirl') {
-          const near = sim.foes.filter(f => Math.hypot(f.x - L.x, f.y - L.y) < def.radius).length;
-          if (near >= 3) sim.castSkill(i, 0, 0);
-        } else if (sim.foes.length >= 6) sim.castSkill(i, 0, 0);
+        if (busy) sim.castSkill(i, 0, 0);
         return;
       }
-      const boss = this.bossFocus ? sim.boss() : null;
-      if (boss && boss.d > sim.paths[boss.path].len * 0.4) {
+      if (bossNear) {
         if (def.target === 'path') { const q = pathAt(sim.paths[boss.path], boss.d + 40); sim.castSkill(i, q.x, q.y); }
         else sim.castSkill(i, boss.x, boss.y);
         return;
       }
+      if (!spare && !danger) return;
+      if (def.target === 'path') {
+        const close = sim.foes.filter(f => f.state === 'walk' && f.d > sim.paths[f.path].len * 0.75);
+        if (close.length >= 4) { const f = close[0]; const q = pathAt(sim.paths[f.path], f.d + 50); sim.castSkill(i, q.x, q.y); }
+        return;
+      }
       const c = this.cluster(def.radius || 80);
-      if (c.at && c.n >= 4) sim.castSkill(i, c.at.x, c.at.y);
+      if (c.at && c.n >= 8) sim.castSkill(i, c.at.x, c.at.y);
     });
   }
 

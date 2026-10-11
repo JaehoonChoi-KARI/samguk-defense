@@ -4,13 +4,14 @@
 // Scenes: title, slots, lord, story, base, map, prep, battle, boss, result, barracks, lordinfo, equip, counters
 
 import { STORIES } from './stories.js';
-import { TROOP_KEYS, LORD_KEYS, EQUIPS, FACTIONS, STAGE_COUNT, BOSS_SKILLS, TROOP_UNLOCK, GENERALS, CHALLENGES, stageChallenge } from './data.js';
+import { TROOP_KEYS, LORD_KEYS, EQUIPS, FACTIONS, STAGE_COUNT, BOSS_SKILLS, TROOP_UNLOCK, GENERALS, CHALLENGES, stageChallenge, LORDS, SKILL_CD, GATE_HP, fxText, equipFx } from './data.js';
 import { PLACES, stageLayout, pathAt } from './maps.js';
 import { stageField, cellKey, CELL } from './field.js';
 import { buildWaves } from './waves.js';
 import { battleSetup, troopStats, skillList, lordLeadership } from './army.js';
 import { TALENT_KEYS, TALENTS, addBlock, addTalent, canRemove, removeTalent, freePoints, autoTalents, talentText } from './talents.js';
 import { Sim } from './sim.js';
+import { TUT_STEPS } from './tutorial.js';
 import { autoplay, expectedSave, recommendRoster, recommendGenerals, Bot } from './bot.js';
 import { defaultSave, sanitize } from './save.js';
 import { applyResult } from './progression.js';
@@ -242,13 +243,13 @@ function botBattles() {
   {
     const s = expectedSave('liubei', 12, 1, { talents: 'none' });
     if (freePoints(s) !== 11) fail(`talent points: ${freePoints(s)}`);
-    if (addBlock(s, 'lordAtk') !== 'row') fail('talent row not shut');
+    if (addBlock(s, 'aura') !== 'row') fail('talent row not shut');
     const arch0 = troopStats(s, 'archer').atk, lead0 = lordLeadership(s);
     for (let i = 0; i < 3; i++) addTalent(s, 'sk1');
     if (skillList(s)[0].lv !== 4) fail(`skill level from talents: ${skillList(s)[0].lv}`);
-    if (!addTalent(s, 'lordAtk')) fail('talent row did not open');
+    if (!addTalent(s, 'aura')) fail('talent row did not open');
     if (canRemove(s, 'sk1')) fail('talent removal would shut a row');
-    removeTalent(s, 'lordAtk');
+    removeTalent(s, 'aura');
     if (!removeTalent(s, 'sk1')) fail('talent removal');
     addTalent(s, 'rangedAtk');
     if (!(troopStats(s, 'archer').atk > arch0)) fail('troop talent has no effect');
@@ -262,7 +263,82 @@ function botBattles() {
     if (freePoints(old) !== 0 || !old.talentNew || old.skills || 'sp' in old) fail(`old save talents: ${JSON.stringify(old.talents)}`);
     const bad = sanitize({ ...defaultSave('sunquan'), level: 3, talents: { sk1: 4, lordAtk: 3 } });
     if (freePoints(bad) !== 2) fail(`overspent talents kept: ${JSON.stringify(bad.talents)}`);
+    // body talents from when the lord fought move to the nodes that replaced them
+    const moved = sanitize({ ...defaultSave('caocao'), level: 8, talents: { sk1: 2, lordHp: 1, sk2: 1, lordAtk: 1 } });
+    if (moved.talents.longCmd !== 1 || moved.talents.aura !== 1 || moved.talents.lordHp) fail(`renamed talents: ${JSON.stringify(moved.talents)}`);
     out.checks.push({ talents: { arch: [Math.round(arch0), Math.round(troopStats(s, 'archer').atk)], lead: [lead0, lordLeadership(s)], old: old.talents } });
+  }
+  // the lord stays in the castle: every order does what it says, lasts and comes back in 3 minutes
+  {
+    const res = {};
+    for (const lord of LORD_KEYS) {
+      const s = expectedSave(lord, 8, 1, { talents: 'none' });
+      s.equipped = { weapon: null, armor: null, treasure: null }; // plain numbers: no gear bonuses
+      const st = STORIES[lord].stages[7];
+      const sim = new Sim(battleSetup(s, 7, st, { seed: 'order' }));
+      sim.start();
+      sim.food = 9999;
+      for (const t of TROOP_KEYS) sim.roster[t] = 9;
+      const free = sim.field.list.filter(c => c.kind === 'plain');
+      const inf = sim.deploy('infantry', free[0].x, free[0].y).squad;
+      const arc = sim.deploy('archer', free[5].x, free[5].y).squad;
+      const g0 = sim.generals[0];
+      if (sim.lord || !inf || !arc) fail(`${lord}: castle setup`);
+      const p = sim.paths[0];
+      for (let i = 0; i < 8; i++) sim.spawnFoe('infantry', 0, false, p.len * 0.5 + i * 6);
+      const mid = pathAt(p, p.len * 0.5 + 20);
+      inf.hp = inf.maxHp * 0.3;
+      g0.state = 'hand'; g0.waitT = 20;
+      sim.gate = GATE_HP - 3;
+      const food0 = sim.food, militia0 = sim.militia.length, zones0 = sim.zones.length;
+      const hp0 = sim.foes.reduce((a, f) => a + f.hp, 0);
+      LORDS[lord].skills.forEach((key, i) => {
+        const sk = sim.skills[i];
+        if (!sk) { fail(`${lord}: skill ${key} locked at Lv 8`); return; }
+        if (Math.abs(sk.cd - SKILL_CD) > 0.01) fail(`${key}: cooldown ${sk.cd}`);
+        const r = sim.castSkill(i, mid.x, mid.y);
+        if (!r.ok) fail(`${key}: ${r.reason}`);
+        if (sim.castSkill(i, mid.x, mid.y).ok) fail(`${key}: cast twice`);
+      });
+      const hit = sim.foes.reduce((a, f) => a + f.hp, 0) < hp0;
+      const got = {
+        lb_heal: inf.hp > inf.maxHp * 0.5 && sim.buff('regen') > 0,
+        lb_oath: g0.waitT === 0 && sim.buff('gen') > 0,
+        lb_militia: sim.militia.length === militia0 + 4,
+        cc_roar: sim.buff('atk') > 0 && sim.troopAtkMult(inf) > 1.2,
+        cc_supply: sim.food > food0,
+        cc_tiger: hit && (sim.stats.kills > 0 || sim.foes.some(f => f.stunT > 2)),
+        sq_volley: sim.buff('rate') > 0,
+        sq_fire: sim.zones.length > zones0,
+        sq_guard: sim.buff('guard') > 0 && sim.gate === GATE_HP - 1,
+      };
+      for (const key of LORDS[lord].skills) if (!got[key]) fail(`order ${key} did nothing`);
+      // orders run out after their time; then the buttons wait for the rest of the 3 minutes
+      for (const f of sim.foes.slice()) sim.killFoe(f);
+      sim.spawnQueue.length = 0;
+      for (let k = 0; k < 31 * 30; k++) sim.update(1 / 30);
+      if (sim.state !== 'play') fail(`${lord}: order test battle ended (${sim.state})`);
+      if (sim.buff('atk') || sim.buff('guard') || sim.buff('rate') || sim.buff('regen')) fail(`${lord}: order still running after 31s`);
+      if (!(sim.skills[0].cdT > 100)) fail(`${lord}: cooldown ran out early (${sim.skills[0].cdT})`);
+      res[lord] = LORDS[lord].skills.join('/');
+    }
+    // 군주의 위엄: squads close to the castle hit harder
+    const s = expectedSave('liubei', 12, 1, { talents: ['sk1', 'sk1', 'sk1', 'aura', 'aura', 'aura'] });
+    const st = STORIES.liubei.stages[11];
+    const sim = new Sim(battleSetup(s, 11, st, { seed: 'aura' }));
+    sim.food = 9999;
+    sim.roster.archer = 9;
+    const gate = sim.layout.gate;
+    const byGate = sim.field.list.slice().sort((a, b) => Math.hypot(a.x - gate.x, a.y - gate.y) - Math.hypot(b.x - gate.x, b.y - gate.y));
+    const near = sim.deploy('archer', byGate[0].x, byGate[0].y).squad;
+    const far = sim.deploy('archer', byGate[byGate.length - 1].x, byGate[byGate.length - 1].y).squad;
+    if (!near || !far || !(sim.troopAtkMult(near) > sim.troopAtkMult(far))) fail(`aura: near ${near && sim.troopAtkMult(near)} far ${far && sim.troopAtkMult(far)}`);
+    // equipment now strengthens the army, and every bonus has words
+    const eq = expectedSave('caocao', 12, 1);
+    const plain = { ...eq, equipped: { weapon: null, armor: null, treasure: null } };
+    if (!(troopStats(eq, 'infantry').atk > troopStats(plain, 'infantry').atk)) fail('weapon does not help the troops');
+    for (const k of Object.keys(EQUIPS)) if (!fxText(equipFx(k, 3))) fail(`equip text ${k}`);
+    out.checks.push({ orders: res, aura: [Math.round(sim.troopAtkMult(near) * 100), Math.round(sim.troopAtkMult(far) * 100)] });
   }
   // rewards on a first clear
   const s = defaultSave('liubei');
@@ -310,11 +386,11 @@ async function uiFlow(game) {
       const lv = game.save.level;
       game.save.level = 3;
       game.show('lord', {});
-      tap(q('.tl-node[data-k="lordHp"]'));
+      tap(q('.tl-node[data-k="longCmd"]'));
       tap(q('.tl-plus'));
-      if (game.save.talents.lordHp !== 1) fail(`talent tap: ${JSON.stringify(game.save.talents)}`);
+      if (game.save.talents.longCmd !== 1) fail(`talent tap: ${JSON.stringify(game.save.talents)}`);
       tap(q('.tl-minus'));
-      if (game.save.talents.lordHp) fail('talent untap');
+      if (game.save.talents.longCmd) fail('talent untap');
       game.save.level = lv;
       game.show('lord', {});
     }
@@ -344,6 +420,12 @@ async function uiFlow(game) {
   const finder = new Bot(b.sim, {}); // the bot's list of places beside the road
   const freeFor = type => finder.pickPos(type, b.setup.troops[type]?.range || 100);
   const center = el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+  // the first battle teaches step by step; this run skips it (the full walk-through comes later)
+  b.tut?.update();
+  if (!b.tut || !b.tut.holding || q('.tut').classList.contains('hidden') || !q('.tut-focus')) fail('tutorial did not start in the first battle');
+  tap(q('.tut-skip'));
+  if (!b.tut.finished || !game.save.seen.tutorial || !q('.tut').classList.contains('hidden')) fail('tutorial skip');
+  step('tutorialSkip');
   // 1) tap a troop in the list, then press, slide and let go on the map
   const card = q('.icard[data-t]');
   const t = card.dataset.t;
@@ -384,23 +466,19 @@ async function uiFlow(game) {
   fire('pointerup', gs.x, gs.y, gcard);
   if (b.sim.generals.find(x => x.key === gk).state !== 'field') fail('dragging a general onto the map');
   step('general');
-  // drag the lord
-  const L = b.sim.lord;
-  const lp = b.view.toScreen(L.x, L.y - 20);
-  fire('pointerdown', lp.x, lp.y);
-  fire('pointermove', lp.x - 60, lp.y - 30);
-  fire('pointerup', lp.x - 60, lp.y - 30);
-  if (Math.hypot(L.hx - L.x, L.hy - L.y) < 10) fail('lord drag');
-  step('lordDrag');
   tap(q('.wp-call'));
   if (b.sim.state !== 'play') fail('wave start');
-  // a skill
+  // the lord's first order (조조: 패왕의 호령) from its button
   tap(q('.sbtn[data-i="0"]'));
   if (b.ui.aim) {
-    const c = b.view.toScreen(L.x + 100, L.y);
+    const mp = pathAt(b.sim.paths[0], b.sim.paths[0].len * 0.5);
+    const c = b.view.toScreen(mp.x, mp.y);
     fire('pointerdown', c.x, c.y);
     fire('pointerup', c.x, c.y);
   }
+  if (!(b.sim.skills[0].cdT > 0)) fail('skill button did not give the order');
+  b.updateHud();
+  if (!q('.sbtn[data-i="0"]').classList.contains('active') || !q('.sbtn[data-i="0"] .cdt').textContent) fail('running order not shown on its button');
   step('skill');
   // the same battle with a mouse
   const mouse = (type, x, y, button = 0) => game.canvas.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, pointerId: 1, bubbles: true, pointerType: 'mouse', button, buttons: type === 'pointerup' ? 0 : 1 }));
@@ -470,6 +548,76 @@ async function uiFlow(game) {
   step('storybook');
   tap(q('.storybook .back-btn'));
   await waitFor(() => game.screenName === 'base');
+  // the tutorial again from the first stage's preparation: every step waits for its action
+  game.show('prep', { stageIdx: 0 });
+  await waitFor(() => game.screenName === 'prep');
+  tap(q('.tut-again'));
+  await waitFor(() => game.battle);
+  {
+    const tb = game.battle;
+    tb.render(game.canvas.getContext('2d'), game.view, 0);
+    const T = tb.tut;
+    if (!T) fail('tutorial button did not start the tutorial');
+    const tapWorld = p => { const s = tb.view.toScreen(p.x, p.y); fire('pointerdown', s.x, s.y); fire('pointerup', s.x, s.y); };
+    const pressCard = el => { const c = center(el); fire('pointerdown', c.x, c.y, el); fire('pointerup', c.x, c.y, el); };
+    const helper = new Bot(tb.sim, {});
+    const seen = [];
+    let guard = 0, frozen = true;
+    while (T && !T.finished && guard++ < 30 * 60 * 10) {
+      if (!T.active) { tb.update(1 / 30); continue; } // the battle runs between steps
+      const k = T.active.key;
+      if (!seen.includes(k)) {
+        seen.push(k);
+        const t0 = tb.sim.time;
+        tb.update(1 / 30);
+        if (tb.sim.time !== t0) frozen = false;
+        if (q('.tut').classList.contains('hidden')) fail(`tutorial ${k}: card hidden`);
+      }
+      const mark = tb.ui.tutMark;
+      switch (k) {
+        case 'melee': case 'ranged': case 'general':
+          if (!mark || !q('.tut-focus')) { fail(`tutorial ${k}: nothing to point at`); T.next(); break; }
+          pressCard(q('.tut-focus'));
+          tapWorld(mark);
+          break;
+        case 'start':
+          tap(q('.wp-call'));
+          // bring the rest of the roster so the lesson lasts until the enemy general
+          for (const t of Object.keys(tb.sim.roster)) {
+            while (tb.sim.roster[t] > 0) {
+              tb.sim.food = Math.max(tb.sim.food, 200);
+              const p = helper.pickPos(t, tb.setup.troops[t].range);
+              if (!p || !tb.sim.deploy(t, p.x, p.y).ok) break;
+            }
+          }
+          break;
+        case 'tapSquad': if (mark) tapWorld(mark); break;
+        case 'promote': tap(q('.popup .promote')); tb.closePopup(); break;
+        case 'skill': tap(q('.sbtn[data-i="0"]')); if (tb.ui.aim) tapWorld(pathAt(tb.sim.paths[0], tb.sim.paths[0].len * 0.5)); break;
+        case 'item': tap(q('.ibtn[data-k="bomb"]')); if (mark) tapWorld(mark); break;
+        default: tap(q('.tut-next'));
+      }
+      tb.update(1 / 30);
+      if (T.active?.key === k && guard % 300 === 299) { fail(`tutorial stuck at ${k}`); break; }
+    }
+    if (!T?.finished || T.skipped) fail(`tutorial did not finish (${seen.join(',')})`);
+    if (!frozen) fail('the battle ran while a tutorial step was up');
+    const want = ['welcome', 'food', 'melee', 'ranged', 'general', 'ground', 'start', 'kill', 'break', 'tapSquad', 'promote', 'skill', 'item', 'speed', 'boss'];
+    const missed = want.filter(k => !seen.includes(k));
+    if (missed.length) fail(`tutorial steps not shown: ${missed}`);
+    out.checks.push({ tutorial: seen.join(','), at: Math.round(tb.sim.time) });
+    // finish the fight; the result says the tutorial is done
+    const fin = new Bot(tb.sim, { callEarly: true });
+    let g2 = 0;
+    while (!tb.reported && g2++ < 30 * 60 * 15) { fin.update(1 / 30); tb.update(1 / 30); }
+    await waitFor(() => game.screenName === 'result');
+    if (tb.sim.state === 'won' && !q('.tut-done')) fail('result does not say the tutorial is done');
+    step('tutorial');
+    tap(q('.result .btn.base'));
+    await waitFor(() => game.screenName !== 'result');
+    if (game.screenName !== 'base') game.show('base');
+    await waitFor(() => game.screenName === 'base');
+  }
   tap(q('.tile.exit'));
   await waitFor(() => game.screenName === 'title');
   step('exit');
@@ -511,7 +659,10 @@ async function shot(game, name, params) {
     game.startBattle(n - 1, { seed: 'shot' });
     const b = game.battle;
     const bot = new Bot(b.sim, {});
-    const until = name === 'boss' ? () => b.sim.boss() && b.sim.boss().d > 250 : () => b.sim.time > 50;
+    // &tut=<step>: show that tutorial step (steps before the first wave are shown on an empty field)
+    const tutKey = params.get('tut');
+    const early = tutKey && TUT_STEPS.findIndex(s => s.key === tutKey) <= TUT_STEPS.findIndex(s => s.key === 'start');
+    const until = early ? () => true : name === 'boss' ? () => b.sim.boss() && b.sim.boss().d > 250 : () => b.sim.time > 50;
     let guard = 0;
     while (!until() && guard < 30 * 60 * 12 && b.sim.state !== 'won' && b.sim.state !== 'lost') {
       bot.update(1 / 30);
@@ -527,7 +678,8 @@ async function shot(game, name, params) {
       const pos = bot.pickPos(ty, b.setup.troops[ty].range);
       if (pos) b.ghostAt(pos);
     }
-    if (params.has('squad')) b.openSquad(b.sim.squads[0]);
+    if (params.has('squad')) b.openSquad(b.sim.squads.find(q => !q.gen) || b.sim.squads[0]);
+    if (tutKey && b.tut) b.tut.enter(TUT_STEPS.find(s => s.key === tutKey));
     if (params.has('aim')) b.onSkill(2);
     if (params.has('geninfo')) b.toggleGenInfo(b.sim.generals[0].key);
     b.render(game.canvas.getContext('2d'), game.view, 0.016);

@@ -1,12 +1,13 @@
-// Battle rules, with no drawing or DOM: enemies march along the roads, our squads and the
-// lord fight them, and the player's commands (deploy, promote, retreat, move the lord,
-// skills, items, call the next wave) change the state. The renderer reads `events`.
+// Battle rules, with no drawing or DOM: enemies march along the roads, our squads and
+// generals fight them, and the player's commands (deploy, promote, retreat, the lord's
+// orders from the castle, items, call the next wave) change the state. The renderer reads
+// `events`.
 
 import {
   TROOPS, FOES, STAR_MULT, STAR_RANGE, STAR_COST, RETREAT_REFUND, GATE_HP, counterMult, counterLevel, BOSS,
   SKILLS, ITEMS, stageHpMult, stageAtkMult, killFood, PASSIVE_FOOD, TROOP_KEYS, diffScale,
   GENERALS, GEN_SPECIALS, GENERAL_RECOVER, GENERAL_MOVE_WAIT, GROUND, FORMATIONS,
-  WEATHER, DUEL, duelChance, ROUT,
+  WEATHER, DUEL, duelChance, ROUT, skillDur, startFood, AURA_R,
 } from './data.js';
 import { pathAt, nearestOnPaths, WORLD_W, WORLD_H } from './maps.js';
 import { cellKey, sizeOf, anchorAt, footCenter, footCells, footNeighbours } from './field.js';
@@ -17,7 +18,6 @@ const REGEN_DELAY = 4; // seconds without being hit before resting
 const REGEN_RATE = 0.02; // of max HP per second
 const NEXT_WAVE_WAIT = 25; // seconds between one wave fully marching in and the next
 const EARLY_BONUS = 2; // 군량 per second skipped
-const LORD_REVIVE = 12;
 const MAX_RAIDERS = 2;
 const BOSS_ENGAGE = 150; // an enemy general stops to fight our units this close to it
 
@@ -62,23 +62,17 @@ export class Sim {
     this.spawnQueue = [];
     this.waveT = 0;
     this.nextT = null; // countdown to the next wave, once the current one has fully marched in
-    this.buffs = { atk: 0, atkT: 0, guard: 0, guardT: 0 };
+    // the lord's lasting orders: key → { v, t }; atk, guard (damage taken), regen (of max HP
+    // per second), gen / genDr (generals), rate (ranged attack speed)
+    this.buffs = {};
     this.stats = {
       kills: 0, lost: 0, deployed: 0, promoted: 0, skills: 0, items: 0, leaked: 0,
       duels: 0, duelWins: 0, routed: 0, early: 0, bossFrac: null,
       types: new Set(), grounds: new Set(), forms: new Set(), // for the stage challenge
     };
 
-    const L = setup.lord;
-    const start = pathAt(this.paths[0], Math.max(0, this.paths[0].len - 170));
-    this.lord = {
-      kind: 'lord', id: this.nextId++, key: setup.lordKey, type: null,
-      x: start.x, y: start.y, hx: start.x, hy: start.y,
-      hp: L.hp, maxHp: L.hp, atk: L.atk, cd: L.cd, cdT: 0, range: L.range, speed: L.speed,
-      def: L.def, ranged: L.ranged, block: L.block, blocking: [],
-      dead: false, reviveT: 0, lastHit: -99, face: 1, moving: false, atkAnim: 0, dashT: 0,
-    };
-    this.skills = setup.skills.map(s => s && { ...s, cdT: 0 });
+    // the lord stays in the castle and only gives orders (skills); activeT = order still running
+    this.skills = setup.skills.map(s => s && { ...s, cdT: 0, activeT: 0 });
     // generals: 'hand' (can be placed once waitT is 0) or 'field' (on the battlefield)
     this.generals = (setup.generals || []).map(g => ({ ...g, state: 'hand', waitT: 0, squad: null, hpLeft: null }));
     this.rallies = [];
@@ -92,17 +86,27 @@ export class Sim {
   emit(e) { this.events.push(e); }
 
   allies() {
-    const out = [...this.squads, ...this.militia, ...this.walls];
-    if (!this.lord.dead) out.push(this.lord);
-    return out;
+    return [...this.squads, ...this.militia, ...this.walls];
   }
 
   blockers() {
     const out = [];
     for (const s of this.squads) if (TROOPS[s.type].melee) out.push(s);
     out.push(...this.militia, ...this.walls);
-    if (!this.lord.dead && !this.lord.moving) out.push(this.lord);
     return out;
+  }
+
+  buff(k) {
+    const b = this.buffs[k];
+    return b && b.t > 0 ? b.v : 0;
+  }
+
+  setBuff(k, v, t) { this.buffs[k] = { v, t }; }
+
+  // 군주의 위엄: squads put close to the castle fight harder.
+  nearLord(u) {
+    const g = this.layout.gate;
+    return Math.hypot((u.hx ?? u.x) - g.x, (u.hy ?? u.y) - g.y) < AURA_R;
   }
 
   starCost(squad) {
@@ -375,26 +379,17 @@ export class Sim {
     return { ok: true, refund };
   }
 
-  moveLord(x, y) {
-    const L = this.lord;
-    if (L.dead) return false;
-    L.hx = Math.max(20, Math.min(WORLD_W - 20, x));
-    L.hy = Math.max(60, Math.min(WORLD_H - 20, y));
-    L.engage = null;
-    if (Math.hypot(L.hx - L.x, L.hy - L.y) > 30) this.releaseAll(L);
-    return true;
-  }
-
-  // Skill i (0..2) at world point (x, y) for targeted skills.
+  // The lord's order i (0..2), at world point (x, y) for the ones aimed at a spot. Power
+  // already includes skill level and skill-effect bonuses.
   castSkill(i, x, y) {
     const s = this.skills[i];
-    const L = this.lord;
     if (!s) return { ok: false, reason: 'locked' };
-    if (L.dead) return { ok: false, reason: 'dead' };
     if (s.cdT > 0) return { ok: false, reason: 'cooldown' };
     const def = SKILLS[s.key];
-    const dmgMult = 1 + (this.mods.skillDmg || 0);
     const p = s.power;
+    const dur = skillDur(def, this.mods);
+    const gate = this.layout.gate;
+    const order = extra => this.emit({ k: 'order', key: s.key, x: gate.x, y: gate.y, dir: gate.dir, ...extra });
     if (def.target === 'path') {
       const g = nearestOnPaths(this.paths, x, y);
       if (g.dist > 150) return { ok: false, reason: 'path' };
@@ -402,75 +397,71 @@ export class Sim {
       s.pathHit = g;
     }
     switch (s.key) {
-      case 'lb_whirl':
-        for (const f of this.foes.slice()) if (dist(f, L) < def.radius) this.hitFoe(f, L.atk * p * dmgMult, null);
-        this.emit({ k: 'whirl', x: L.x, y: L.y, r: def.radius });
+      case 'lb_heal':
+        for (const a of [...this.squads, ...this.militia]) this.healAlly(a, a.maxHp * p);
+        this.setBuff('regen', p / 15, dur);
+        order();
         break;
-      case 'lb_heal': {
-        for (const a of this.allies()) {
-          if (a.kind !== 'wall' && dist(a, L) < def.radius) this.healAlly(a, a.maxHp * p);
-        }
-        this.emit({ k: 'healwave', x: L.x, y: L.y, r: def.radius });
+      case 'lb_oath':
+        for (const g of this.generals) if (g.state === 'hand') g.waitT = 0;
+        this.setBuff('gen', p, dur);
+        this.setBuff('genDr', def.dr, dur);
+        order();
         break;
-      }
       case 'lb_militia': {
         const T = this.setup.troops.infantry;
         const g = s.pathHit;
         for (let k = 0; k < def.count; k++) {
-          const q = pathAt(this.paths[g.path], g.d + (k - 1) * 26);
+          const q = pathAt(this.paths[g.path], Math.max(0, g.d + (k - 1.5) * 24));
           this.militia.push({
             kind: 'militia', id: this.nextId++, type: 'infantry', x: q.x, y: q.y,
             hp: T.hp * p, maxHp: T.hp * p, atk: T.atk * p, cd: 1, cdT: 0.3, range: 50, block: 2,
-            blocking: [], t: def.dur, lastHit: -99, atkAnim: 0, face: 1,
+            blocking: [], t: dur, lastHit: -99, atkAnim: 0, face: 1,
           });
         }
         this.emit({ k: 'summon', x, y });
-        break;
-      }
-      case 'cc_dash': {
-        let dx = x - L.x, dy = y - L.y;
-        const d = Math.hypot(dx, dy) || 1;
-        const k = Math.min(1, def.maxDist / d);
-        const ex = L.x + dx * k, ey = L.y + dy * k;
-        for (const f of this.foes.slice()) {
-          if (segDist(f.x, f.y, L.x, L.y, ex, ey) < def.width) this.hitFoe(f, L.atk * p * dmgMult, null);
-        }
-        this.emit({ k: 'dash', x: L.x, y: L.y, x2: ex, y2: ey });
-        this.releaseAll(L);
-        L.x = L.hx = ex; L.y = L.hy = ey;
-        L.dashT = 0.25;
+        order();
         break;
       }
       case 'cc_roar':
-        this.buffs.atk = p;
-        this.buffs.atkT = def.dur;
-        this.emit({ k: 'roar', x: L.x, y: L.y });
+        this.setBuff('atk', p, dur);
+        order();
         break;
-      case 'cc_cavalry':
+      case 'cc_supply': {
+        const amount = Math.round(startFood(this.n) * p);
+        this.food += amount;
+        order({ amount });
+        break;
+      }
+      case 'cc_tiger':
         for (const f of this.foes.slice()) {
           if (dist(f, { x, y }) < def.radius) {
             f.stunT = Math.max(f.stunT, def.stun);
-            this.hitFoe(f, L.atk * p * dmgMult, null);
+            this.hitFoe(f, this.setup.power * p, 'cavalry');
           }
         }
+        this.emit({ k: 'dash', x: gate.x, y: gate.y, x2: x, y2: y });
         this.emit({ k: 'charge', x, y, r: def.radius });
+        order();
         break;
-      case 'sq_rain':
-        this.zones.push({ kind: 'rain', x, y, r: def.radius, t: def.dur, tick: 0, every: def.dur / def.hits, dmg: L.atk * p * dmgMult });
+      case 'sq_volley':
+        this.setBuff('rate', p, dur);
+        order();
         break;
       case 'sq_fire':
-        this.zones.push({ kind: 'fire', x, y, r: def.radius, t: def.dur, tick: 0, every: 0.5, dmg: L.atk * p * dmgMult, slow: def.slow });
+        this.zones.push({ kind: 'fire', x, y, r: def.radius, t: dur, tick: 0, every: 0.5, dmg: this.setup.power * p, slow: def.slow });
+        order();
         break;
       case 'sq_guard':
-        this.buffs.guard = p;
-        this.buffs.guardT = def.dur;
-        this.gate = Math.min(GATE_HP, this.gate + 1);
-        this.emit({ k: 'guard', x: L.x, y: L.y });
+        this.setBuff('guard', p, dur);
+        this.gate = Math.min(GATE_HP, this.gate + def.gate);
+        order();
         break;
       default:
         return { ok: false, reason: 'unknown' };
     }
     s.cdT = s.cd;
+    s.activeT = dur;
     this.stats.skills++;
     this.emit({ k: 'skill', key: s.key });
     return { ok: true };
@@ -561,7 +552,7 @@ export class Sim {
 
   update(dt) {
     for (const g of this.generals) if (g.waitT > 0) g.waitT = Math.max(0, g.waitT - dt);
-    if (this.state !== 'play') { this.updateLord(dt, true); return; }
+    if (this.state !== 'play') return;
     this.time += dt;
     this.rallies = this.squads.filter(q => q.gen && q.gen.kind === 'rally');
 
@@ -579,10 +570,13 @@ export class Sim {
     }
     this.food += PASSIVE_FOOD * (1 + (this.mods.food || 0)) * dt;
 
-    // buffs
-    if (this.buffs.atkT > 0 && (this.buffs.atkT -= dt) <= 0) this.buffs.atk = 0;
-    if (this.buffs.guardT > 0 && (this.buffs.guardT -= dt) <= 0) this.buffs.guard = 0;
-    for (const s of this.skills) if (s && s.cdT > 0) s.cdT = Math.max(0, s.cdT - dt);
+    // the lord's orders
+    for (const b of Object.values(this.buffs)) if (b.t > 0) b.t -= dt;
+    for (const s of this.skills) {
+      if (!s) continue;
+      if (s.cdT > 0) s.cdT = Math.max(0, s.cdT - dt);
+      if (s.activeT > 0) s.activeT = Math.max(0, s.activeT - dt);
+    }
 
     this.updateFoes(dt);
     this.updateBlocking();
@@ -590,7 +584,6 @@ export class Sim {
     this.updateDuel(dt);
     this.updateMilitia(dt);
     this.updateWalls(dt);
-    this.updateLord(dt, false);
     this.updateProjectiles(dt);
     this.updateZones(dt);
 
@@ -746,11 +739,10 @@ export class Sim {
 
   allyAlive(a) {
     if (!a || a.hp <= 0 || a.gone) return false;
-    if (a.kind === 'lord') return !a.dead;
     return this.squads.includes(a) || this.militia.includes(a);
   }
 
-  // The nearest of our squads, militia or the lord within reach of the enemy general.
+  // The nearest of our squads or militia within reach of the enemy general.
   bossPrey(f) {
     const reach = Math.max(BOSS_ENGAGE, f.range || 0);
     let best = null, bd = reach;
@@ -880,7 +872,7 @@ export class Sim {
     }
   }
 
-  // Walking enemies get stopped by melee squads, militia, walls and the lord.
+  // Walking enemies get stopped by melee squads, militia and walls.
   updateBlocking() {
     const blockers = this.blockers();
     for (const b of blockers) b.blocking = b.blocking.filter(f => f.hp > 0 && f.blocker === b);
@@ -888,7 +880,7 @@ export class Sim {
       if (f.state !== 'walk' || f.chargeT > 0) continue;
       for (const b of blockers) {
         if (b.blocking.length >= b.block) continue;
-        const reach = b.kind === 'wall' ? 30 : b.kind === 'lord' ? 30 : 28;
+        const reach = b.kind === 'wall' ? 30 : 28;
         if (dist(f, b) < reach) {
           f.state = 'blocked';
           f.blocker = b;
@@ -900,9 +892,11 @@ export class Sim {
   }
 
   // Static bonuses (level, lord trait, equipment) are already in setup.troops; this adds the
-  // lord's roar and a nearby rally general.
+  // lord's orders, 군주의 위엄 near the castle and a nearby rally general.
   troopAtkMult(u = null) {
-    let m = 1 + this.buffs.atk;
+    let m = 1 + this.buff('atk');
+    if (u?.gen) m += this.buff('gen');
+    if (u && this.mods.aura && u.kind === 'squad' && this.nearLord(u)) m += this.mods.aura;
     if (u && this.rallies.length) {
       const R = GEN_SPECIALS.rally;
       if (this.rallies.some(q => q !== u && Math.hypot(q.x - u.x, q.y - u.y) < R.radius)) m += R.atk;
@@ -1065,7 +1059,7 @@ export class Sim {
       } else {
         t = this.pickTarget(s, s.range);
         if (!t) continue;
-        s.cdT = s.cd;
+        s.cdT = s.cd / (1 + this.buff('rate'));
         s.atkAnim = 0.3;
         s.face = t.x >= s.x ? 1 : -1;
         const from = { x: s.x, y: s.y - 14 };
@@ -1159,74 +1153,13 @@ export class Sim {
     }
   }
 
-  updateLord(dt, idle) {
-    const L = this.lord;
-    L.atkAnim = Math.max(0, L.atkAnim - dt);
-    if (L.dashT > 0) L.dashT -= dt;
-    if (L.dead) {
-      if (idle) return;
-      L.reviveT -= dt;
-      if (L.reviveT <= 0) {
-        const p = pathAt(this.paths[0], Math.max(0, this.paths[0].len - 90));
-        L.dead = false;
-        L.hp = L.maxHp;
-        L.x = L.hx = p.x;
-        L.y = L.hy = p.y;
-        this.emit({ k: 'revive', x: L.x, y: L.y });
-      }
-      return;
-    }
-    // Melee lords step out to fight enemies walking past their post.
-    let goal = { x: L.hx, y: L.hy };
-    if (!L.ranged && !idle) {
-      if (L.engage && (L.engage.hp <= 0 || !this.foes.includes(L.engage) || dist(L.engage, goal) > 140)) L.engage = null;
-      if (!L.engage && !L.blocking.length) {
-        let best = null, bd = 110;
-        for (const f of this.foes) {
-          const d = dist(f, goal);
-          if (d < bd && (f.state === 'walk' || f.state === 'raid')) { bd = d; best = f; }
-        }
-        L.engage = best;
-      }
-      if (L.blocking.length) goal = { x: L.x, y: L.y };
-      else if (L.engage) goal = L.engage;
-    }
-    const dx = goal.x - L.x, dy = goal.y - L.y;
-    const d = Math.hypot(dx, dy);
-    const stopAt = L.engage && goal === L.engage ? 20 : 2;
-    const speed = L.speed * (this.weather.speed || 1);
-    if (d > stopAt + 0.5) {
-      const step = Math.min(d - stopAt, speed * dt);
-      L.x += dx / d * step;
-      L.y += dy / d * step;
-      L.face = dx >= 0 ? 1 : -1;
-      L.moving = !(L.engage && goal === L.engage) || d > 40;
-      if (L.moving && L.blocking.length) this.releaseAll(L);
-    } else {
-      L.moving = false;
-    }
-    if (idle) return;
-    this.regen(L, dt);
-    L.cdT -= dt;
-    if (L.cdT > 0) return;
-    const t = L.blocking.find(f => f.hp > 0) || this.pickTarget(L, L.range);
-    if (!t) return;
-    L.cdT = L.cd;
-    L.atkAnim = 0.3;
-    L.face = t.x >= L.x ? 1 : -1;
-    if (L.ranged) {
-      this.projectiles.push({ kind: 'arrow', side: 'p', x: L.x, y: L.y - 18, target: t, tx: t.x, ty: t.y, speed: 700, dmg: L.atk, att: null, big: true });
-      this.emit({ k: 'bow', x: L.x, y: L.y });
-    } else {
-      this.hitFoe(t, L.atk, null, L);
-      this.emit({ k: 'slash', x: t.x, y: t.y, type: 'lord' });
-    }
-  }
-
   regen(u, dt) {
-    if (u.hp < u.maxHp && this.time - u.lastHit > REGEN_DELAY) {
+    if (u.hp >= u.maxHp) return;
+    if (this.time - u.lastHit > REGEN_DELAY) {
       u.hp = Math.min(u.maxHp, u.hp + u.maxHp * REGEN_RATE * (this.mods.regen || 1) * (u.dr ? 2 : 1) * dt);
     }
+    const r = this.buff('regen'); // 인덕의 손길 keeps healing even in a fight
+    if (r) u.hp = Math.min(u.maxHp, u.hp + u.maxHp * r * dt);
   }
 
   nearestAlly(f, range) {
@@ -1350,7 +1283,6 @@ export class Sim {
       f.cmT = 1.2;
       this.emit({ k: 'counter', x: f.x, y: f.y - 22, lv });
     }
-    if (src && src.kind === 'lord' && f.boss) this.emit({ k: 'hitBoss' });
     if (f.hp <= 0) this.killFoe(f);
     else if (f.boss && !this.wavered && f.hp < f.maxHp * 0.5) {
       // the enemy general is badly hurt: some of the soldiers near it lose heart
@@ -1410,21 +1342,14 @@ export class Sim {
   hitAlly(a, dmg, att) {
     if (!a || a.hp <= 0) return;
     let v = dmg * counterMult(att, a.type);
-    if (a.kind === 'lord') v *= 1 - (a.def || 0);
     if (a.dr) v *= 1 - a.dr;
     if (a.formDr) v *= 1 - a.formDr;
-    if (a.kind !== 'wall') v *= 1 - this.buffs.guard;
+    if (a.gen) v *= 1 - this.buff('genDr');
+    if (a.kind !== 'wall') v *= (1 - this.buff('guard')) * (1 - (this.mods.troopDef || 0));
     a.hp -= v;
     a.lastHit = this.time;
     if (a.hp > 0) return;
-    if (a.kind === 'lord') {
-      this.releaseAll(a);
-      a.dead = true;
-      a.hp = 0;
-      a.engage = null;
-      a.reviveT = this.mods.lordRevive ? LORD_REVIVE / 2 : LORD_REVIVE;
-      this.emit({ k: 'lordDown', x: a.x, y: a.y, wait: a.reviveT });
-    } else if (a.kind === 'squad' && a.gen) {
+    if (a.kind === 'squad' && a.gen) {
       const g = a.gen;
       g.state = 'hand';
       g.waitT = GENERAL_RECOVER - (this.mods.genRecover || 0);
@@ -1478,11 +1403,4 @@ export class Sim {
     for (const g of wave.groups) c[g.type] = (c[g.type] || 0) + g.count;
     return TROOP_KEYS.filter(t => c[t]).sort((a, b) => c[b] - c[a]).map(t => [t, c[t]]);
   }
-}
-
-function segDist(px, py, ax, ay, bx, by) {
-  const vx = bx - ax, vy = by - ay;
-  const l2 = vx * vx + vy * vy || 1;
-  const t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / l2));
-  return Math.hypot(px - ax - vx * t, py - ay - vy * t);
 }

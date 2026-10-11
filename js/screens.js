@@ -15,7 +15,7 @@ import {
   TALENT_TREES, TALENT_ROWS, TALENTS, talentLabel, talentText, talentPoints, freePoints, treeSpent, addBlock, canRemove,
   addTalent, removeTalent, resetTalents, autoTalents, skillLevel,
 } from './talents.js';
-import { lordStats, troopStats, lordLeadership, rosterLead, troopUnlocked, skillList, fitRoster, unlockedGenerals, pickedGenerals, generalStats, generalUnlocked } from './army.js';
+import { equipTotals, troopStats, lordLeadership, rosterLead, troopUnlocked, skillList, fitRoster, unlockedGenerals, pickedGenerals, generalStats, generalUnlocked } from './army.js';
 import { buildWaves, stageSummary } from './waves.js';
 import { stageLayout } from './maps.js';
 import { stageField } from './field.js';
@@ -35,6 +35,7 @@ const backBtn = (label = '← 뒤로') => `<button class="back-btn" type="button
 const us = save => FACTIONS[LORDS[save.lord].faction];
 const gradeName = key => `<b class="grade" style="color:${GRADES[EQUIPS[key].g].color}">${EQUIPS[key].name}</b>`;
 const upTag = up => (up ? ` <span class="up">+${up}</span>` : '');
+const mins = sec => { const t = Math.round(sec); return t % 60 ? `${Math.floor(t / 60)}분 ${t % 60}초` : `${t / 60}분`; };
 const storyOf = save => STORIES[save.lord];
 const troopImg = (save, t, size = 56) => `<img class="ticon" src="${troopIcon(t, us(save), size)}" alt="">`;
 
@@ -500,6 +501,7 @@ function prepScreen(game, { stageIdx }) {
           <div class="prep-items"></div>
           <div class="pc-h">🛡 장비 <button class="mini to-equip" type="button">바꾸기 ▶</button></div>
           <div class="gear"></div>
+          ${stageIdx === 0 && s.seen.tutorial ? '<button class="btn tut-again" type="button">🎓 튜토리얼로 다시 하기</button>' : ''}
           <button class="btn primary big go" type="button">⚔ 출진!</button>
         </section>
       </div>
@@ -620,12 +622,14 @@ function prepScreen(game, { stageIdx }) {
     toast(el, '적의 약점에 맞춰 골랐어요');
   });
   $('.to-equip').addEventListener('click', () => { sfx.select(); game.persist(); game.show('equip', { back: 'prep', stageIdx }); });
-  $('.go').addEventListener('click', () => {
+  const go = tutorial => {
     if (rosterLead(s.roster) <= 0) { sfx.denied(); shake($('.roster')); toast(el, '부대를 하나 이상 데려가세요', true); return; }
     sfx.confirm();
     game.persist();
-    game.startBattle(stageIdx);
-  });
+    game.startBattle(stageIdx, tutorial ? { tutorial: true } : {});
+  };
+  $('.go').addEventListener('click', () => go(false));
+  $('.tut-again')?.addEventListener('click', () => go(true));
   paintRoster();
   paintGenerals();
   paintItems();
@@ -726,22 +730,25 @@ function lordScreen(game, arg = {}) {
     return BLOCK[why] || '';
   };
   const paint = () => {
-    const st = lordStats(s);
     const list = skillList(s);
+    const fx = equipTotals(s);
+    const bonus = ['troopAtk', 'troopHp', 'troopDef', 'genPower', 'skillDmg', 'skillCd', 'skillDur']
+      .filter(k => fx[k]).map(k => `<span>${fxText({ [k]: fx[k] })}</span>`).join('');
     el.querySelector('.lord-info').innerHTML = `
       <img class="big-face" src="${lordIcon(s.lord, 180)}" alt="">
       <h2>${L.name} <small>${L.title}</small></h2>
       <div class="stat-list">
         <div>레벨 <b>${s.level}</b> <small>(경험치 ${fmt(s.exp)} / ${fmt(expNeed(s.level))})</small></div>
-        <div>❤ 체력 <b>${fmt(st.hp)}</b> · ⚔ 공격 <b>${fmt(st.atk)}</b> <small>${L.ranged ? '활' : '칼'}</small></div>
-        <div>🛡 받는 피해 <b>-${pct(st.def)}</b> · 🚩 통솔력 <b>${lordLeadership(s)}</b></div>
+        <div>🚩 통솔력 <b>${lordLeadership(s)}</b> <small>데려갈 수 있는 부대 수</small></div>
+        <div class="castle-note">🏯 군주는 성 안에서 지휘해요. 장비와 특성은 출진한 군대를 강하게 해요.</div>
+        ${bonus ? `<div class="bonus-list">${bonus}</div>` : ''}
       </div>
       <div class="trait">⭐ ${L.trait}</div>
       <div class="lord-sk-list">
         ${L.skills.map((key, i) => {
           const def = SKILLS[key];
           const sk = list[i];
-          return `<div class="lsk ${sk ? '' : 'locked'}"><span class="sk-ico">${def.icon}</span><div><b>${def.name}</b> ${sk ? `<span class="lv">Lv ${sk.lv}</span> <small>대기 ${Math.round(sk.cd)}초</small>` : `<small>🔒 군주 Lv ${SKILL_UNLOCK[i]}에 배워요</small>`}</div></div>`;
+          return `<div class="lsk ${sk ? '' : 'locked'}"><span class="sk-ico">${def.icon}</span><div><b>${def.name}</b> ${sk ? `<span class="lv">Lv ${sk.lv}</span> <small>대기 ${mins(sk.cd)}</small>` : `<small>🔒 군주 Lv ${SKILL_UNLOCK[i]}에 배워요</small>`}<small class="sk-desc">${def.desc(sk ? sk.lv : 1)}</small></div></div>`;
         }).join('')}
       </div>`;
     const free = freePoints(s);
@@ -836,6 +843,7 @@ function equipScreen(game, arg = {}) {
       ${header(game)}
       ${backBtn()}
       <div class="eq-tabs">${Object.entries(SLOTS).map(([k, v]) => `<button class="eq-tab" data-k="${k}" type="button">${v}</button>`).join('')}</div>
+      <p class="eq-note">👑 군주는 성 안에서 지휘해요. 장비를 군대에 내려 주면 출진한 모든 부대가 강해져요.</p>
       <div class="eq-cols">
         <div class="panel eq-list"></div>
         <div class="panel eq-detail"></div>
@@ -990,6 +998,7 @@ function resultScreen(game, { r, out }) {
     lines.push(`<div class="rw big">✨ 새 스킬: ${SKILLS[key].icon} ${SKILLS[key].name}</div>`);
   }
   if (out.first) lines.push(`<div class="rw big">📜 새 이야기가 열렸어요: <b>제${r.stageIdx + 1}장 · ${st.title}</b> <small>이야기책에서 자세히 읽을 수 있어요</small></div>`);
+  if (r.tutorial) lines.push(`<div class="rw big tut-done">🎓 튜토리얼 완료! <small>본영에서 🏕️ 병영(골드로 병종 강화) · 👑 군주(특성 찍기) · 🛡️ 장비 · 🎖️ 장수 · 📊 상성표를 둘러보세요. 1지역 정비 화면에서 튜토리얼을 다시 할 수 있어요.</small></div>`);
   if (r.challenge) {
     const c = r.challenge;
     if (out.challenge) lines.push(`<div class="rw big">${c.icon} 도전 성공! <b>${c.text}</b> <small>+${fmt(out.challenge)}💰</small></div>`);

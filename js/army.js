@@ -1,9 +1,9 @@
-// Numbers derived from a save: lord stats, squad stats, equipment bonuses, skills,
+// Numbers derived from a save: squad stats, equipment and talent bonuses, the lord's skills,
 // and the setup object a battle starts from.
 
 import {
-  TROOPS, TROOP_KEYS, TROOP_UNLOCK, LORDS, SKILLS, SKILL_UNLOCK, EQUIPS, equipFx,
-  lordBase, leadership, troopLevelMult, startFood, ITEM_KEYS, diffOf,
+  TROOPS, TROOP_KEYS, TROOP_UNLOCK, LORDS, SKILLS, equipFx, cmdPower,
+  leadership, troopLevelMult, startFood, ITEM_KEYS, diffOf,
   GENERALS, GEN_SPECIALS, GENERAL_PICKS, GENERAL_HP, GENERAL_ATK, generalsOf, weatherKey, stageChallenge,
 } from './data.js';
 import { stageLayout } from './maps.js';
@@ -23,21 +23,6 @@ export function equipTotals(save) {
   return tot;
 }
 
-export function lordStats(save) {
-  const L = LORDS[save.lord];
-  const b = lordBase(save.level, L.ranged);
-  const fx = equipTotals(save);
-  return {
-    hp: Math.round((b.hp + (fx.hp || 0)) * (1 + (fx.lordHp || 0))),
-    atk: Math.round((b.atk + (fx.atk || 0) * (L.ranged ? 0.75 : 1)) * (1 + (fx.lordAtk || 0))),
-    cd: b.cd / (1 + (fx.attackSpeed || 0)),
-    range: b.range,
-    speed: Math.round(b.speed * (1 + (fx.lordSpeed || 0))),
-    def: Math.min(0.5, fx.def || 0),
-    ranged: L.ranged,
-    block: b.block,
-  };
-}
 
 export function troopStats(save, type) {
   const T = TROOPS[type];
@@ -75,7 +60,7 @@ export function skillList(save) {
     const lv = skillLevel(save, i);
     if (!lv) return null;
     const def = SKILLS[key];
-    return { key, lv, cd: def.cd * (1 - Math.min(0.5, fx.skillCd || 0)), power: def.power(lv) };
+    return { key, lv, cd: def.cd * (1 - Math.min(0.5, fx.skillCd || 0)), power: def.power(lv) * (1 + (fx.skillDmg || 0)) };
   });
 }
 
@@ -115,7 +100,7 @@ export function battleSetup(save, stageIdx, stage, opts = {}) {
     layout,
     field: stageField(stage, layout),
     waves,
-    lord: lordStats(save),
+    power: cmdPower(save.level), // damage base for the lord's orders
     troops,
     roster: fitRoster(save, save.roster),
     items,
@@ -125,12 +110,13 @@ export function battleSetup(save, stageIdx, stage, opts = {}) {
     mods: {
       food: (tf.food || 0) + (fx.food || 0),
       starCost: (tf.starCost || 0) + (fx.starCost || 0),
-      skillDmg: fx.skillDmg || 0,
+      skillDur: fx.skillDur || 0,
       regen: tf.regen || 1,
       counter: fx.counter || 0,
       genSpec: Math.min(0.5, fx.genSpec || 0),
       genRecover: fx.genRecover || 0,
-      lordRevive: fx.lordRevive || 0,
+      troopDef: Math.min(0.5, fx.troopDef || 0),
+      aura: fx.aura || 0,
     },
   };
 }

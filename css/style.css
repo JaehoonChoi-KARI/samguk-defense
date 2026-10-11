@@ -503,6 +503,15 @@ em.up { color: #e07b00; font-style: normal; }
 .ct-line .ticon { width: 32px; height: 32px; }
 .ct-line small { color: var(--ink2); font-weight: 600; font-size: 12px; }
 .ct-tip { text-align: center; font-weight: 800; color: var(--gold); }
+.castle-note { font-size: 13px; color: var(--ink2); margin-top: 4px; }
+.bonus-list { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; font-weight: 700; color: #2f7a32; }
+.lsk .sk-desc { display: block; font-size: 12px; color: var(--ink2); line-height: 1.3; }
+.tut-again { width: 100%; margin-bottom: 6px; }
+.rw.tut-done { color: #2f7a32; }
+.eq-note { text-align: center; margin: 4px 0 8px; font-size: 14px; color: #f0dfb8; font-weight: 700; }
+.sbtn .cdt { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); z-index: 3; font-size: 15px; color: #fff; text-shadow: 0 1px 3px #000; text-align: center; }
+.sbtn.active { box-shadow: 0 0 0 4px #7dff9a, 0 0 16px rgba(125,255,154,0.8); }
+.sbtn.active .cdt { color: #c8ffd2; }
 .guide-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
 .guide-grid p { margin: 2px 0 6px; font-size: 14px; }
 .g-line { font-size: 15px; margin: 4px 0; }
@@ -537,7 +546,7 @@ em.up { color: #e07b00; font-style: normal; }
 
 .bhud { position: absolute; inset: 0; pointer-events: none; color: #fff; font-weight: 800; }
 .bhud > * { pointer-events: auto; }
-.bhud .banner, .bhud .toast, .bhud .tut { pointer-events: none; }
+.bhud .banner, .bhud .toast { pointer-events: none; }
 .tb-left { position: absolute; top: var(--safe-t); left: var(--safe-l); display: flex; gap: 6px; }
 .pill { background: rgba(20, 12, 6, 0.72); border: 2px solid rgba(242,193,78,0.6); border-radius: 12px; padding: 6px 12px; font-size: 19px; }
 .pill b { font-size: 21px; }
@@ -618,10 +627,25 @@ em.up { color: #e07b00; font-style: normal; }
 .toast.show { animation: toast2 1.6s forwards; }
 @keyframes toast2 { 0% { opacity: 0; } 10%, 80% { opacity: 1; } 100% { opacity: 0; } }
 .tut {
-  position: absolute; top: calc(var(--safe-t) + 58px); left: var(--safe-l);
-  max-width: 300px; background: rgba(255, 248, 225, 0.95); color: var(--ink); border: 3px solid var(--gold2);
-  border-radius: 14px; padding: 10px 12px; font-size: 16px; font-weight: 700; line-height: 1.4;
+  position: absolute; top: calc(var(--safe-t) + 58px); left: calc(var(--safe-l) + 8px); z-index: 40;
+  width: 390px; max-width: calc(100vw - 260px); background: rgba(255, 248, 225, 0.97); color: var(--ink); border: 4px solid var(--gold2);
+  border-radius: 16px; padding: 10px 14px 12px; font-size: 16px; font-weight: 700; line-height: 1.45;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5); pointer-events: auto; animation: tutIn 0.25s ease-out;
 }
+.tut.low { top: calc(var(--safe-t) + 250px); }
+@keyframes tutIn { from { transform: translateY(-10px); } }
+.tut-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.tut-n { font-size: 13px; color: #8a5a10; font-weight: 900; }
+.tut-skip { border: 0; background: none; color: #8a7a60; font-size: 13px; font-weight: 800; text-decoration: underline; cursor: pointer; padding: 4px; }
+.tut-title { font-size: 20px; font-weight: 900; margin-bottom: 4px; color: #6b3a00; }
+.tut-text { font-size: 16px; }
+.tut-text b { color: #a3320b; }
+.tut-foot { margin-top: 8px; text-align: right; }
+.tut-next { border: 0; border-radius: 12px; padding: 10px 22px; font-size: 18px; font-weight: 900; color: #3a2400; background: linear-gradient(180deg, #ffe27a, #f2b52e); box-shadow: 0 3px 0 #a87412; cursor: pointer; }
+.tut-do { display: inline-block; font-size: 17px; font-weight: 900; color: #2f7a32; animation: tutBob 1s ease-in-out infinite; }
+@keyframes tutBob { 50% { transform: translateX(-6px); } }
+.tut-focus { animation: tutGlow 1s ease-in-out infinite !important; z-index: 35; }
+@keyframes tutGlow { 0%, 100% { box-shadow: 0 0 0 3px #ffd84a, 0 0 10px 3px rgba(255,216,74,0.7); } 50% { box-shadow: 0 0 0 6px #ffd84a, 0 0 26px 10px rgba(255,216,74,0.95); } }
 
 .popup {
   position: absolute; min-width: 300px; background: linear-gradient(180deg, var(--paper), var(--paper2)); color: var(--ink);

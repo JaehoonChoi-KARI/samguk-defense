@@ -1,7 +1,7 @@
-// Game rules and numbers: troop types and counters, lords and skills, equipment,
+// Game rules and numbers: troop types and counters, lords and their orders, equipment,
 // consumable items and growth formulas. Balance knobs live here.
 
-export const VERSION = '1.0.7'; // keep in sync with CACHE in sw.js
+export const VERSION = '1.0.8'; // keep in sync with CACHE in sw.js
 export const STAGE_COUNT = 20;
 export const GATE_HP = 20;
 export const MAX_LORD_LEVEL = 30;
@@ -220,89 +220,91 @@ export const FACTIONS = {
 
 export const LORDS = {
   liubei: {
-    name: '유비', title: '인덕의 군주', faction: 'shu', ranged: false,
+    name: '유비', title: '인덕의 군주', faction: 'shu',
     trait: '인덕: 모든 부대 체력 +15%, 쉬는 동안 회복 2배',
     traitFx: { troopHp: 0.15, regen: 2 },
     style: '부대가 튼튼해서 버티기 좋아요',
-    skills: ['lb_whirl', 'lb_heal', 'lb_militia'],
+    skills: ['lb_heal', 'lb_oath', 'lb_militia'],
   },
   caocao: {
-    name: '조조', title: '난세의 간웅', faction: 'wei', ranged: false,
+    name: '조조', title: '난세의 간웅', faction: 'wei',
     trait: '간웅: 군량 +20%, 승급 비용 -20%',
     traitFx: { food: 0.2, starCost: 0.2 },
     style: '군량이 많아 부대를 빨리 늘리고 승급해요',
-    skills: ['cc_dash', 'cc_roar', 'cc_cavalry'],
+    skills: ['cc_roar', 'cc_supply', 'cc_tiger'],
   },
   sunquan: {
-    name: '손권', title: '강동의 호랑이', faction: 'wu', ranged: true,
-    trait: '강동: 원거리 부대 사거리 +12%, 공격 +10%. 손권도 활을 쏴요',
+    name: '손권', title: '강동의 호랑이', faction: 'wu',
+    trait: '강동: 원거리 부대 사거리 +12%, 공격 +10%',
     traitFx: { rangedRange: 0.12, rangedAtk: 0.1 },
     style: '궁수·책사·투석기가 강해요',
-    skills: ['sq_rain', 'sq_fire', 'sq_guard'],
+    skills: ['sq_volley', 'sq_fire', 'sq_guard'],
   },
 };
 export const LORD_KEYS = ['liubei', 'caocao', 'sunquan'];
 
-export const lordBase = (lv, ranged) => ({
-  hp: Math.round(520 + 58 * (lv - 1)),
-  atk: Math.round((26 + 3.4 * (lv - 1)) * (ranged ? 0.72 : 1)),
-  cd: ranged ? 1.0 : 0.9,
-  range: ranged ? 190 : 56,
-  speed: 125,
-  block: 2,
-});
 export const expNeed = lv => Math.round(60 * 1.18 ** (lv - 1));
 export const leadership = lv => 8 + 2 * lv;
 
-// Skills unlock at lord levels 1, 3, 6. target: 'self' casts at once, 'point' asks for a spot.
+// The lord stays inside the castle, so its skills are orders and rallying calls, not blows.
+// They are big and slow: most last 30 seconds and come back after 3 minutes, about once or
+// twice a battle. Skills unlock at lord levels 1, 3, 6; target 'self' acts at once, 'point'
+// and 'path' ask for a spot. Damage from orders (cavalry, fire) grows with the lord's level.
 export const SKILL_UNLOCK = [1, 3, 6];
+export const SKILL_CD = 180;
+export const cmdPower = lv => 30 * 1.08 ** (lv - 1);
+const grow = (base, step) => lv => base + step * (lv - 1);
+const lvPct = lv => pct(1 + 0.2 * (lv - 1)); // strength of damage orders against level 1
 export const SKILLS = {
-  lb_whirl: {
-    name: '쌍고검 난무', icon: '⚔️', target: 'self', cd: 18, radius: 120,
-    power: lv => 3 + 0.6 * (lv - 1),
-    desc: lv => `유비 주변의 적을 베어요 (공격력의 ${pct(3 + 0.6 * (lv - 1))})`,
-  },
   lb_heal: {
-    name: '인덕의 손길', icon: '💚', target: 'self', cd: 36, radius: 320,
-    power: lv => 0.3 + 0.06 * (lv - 1),
-    desc: lv => `가까운 부대와 유비의 체력을 ${pct(0.3 + 0.06 * (lv - 1))} 회복해요`,
+    name: '인덕의 손길', icon: '💚', target: 'self', cd: SKILL_CD, dur: 30,
+    power: grow(0.3, 0.06),
+    desc: lv => `모든 부대와 장수의 체력을 ${pct(grow(0.3, 0.06)(lv))} 바로 회복하고, 30초 동안 계속 조금씩 회복해요`,
+  },
+  lb_oath: {
+    name: '도원결의', icon: '🍑', target: 'self', cd: SKILL_CD, dur: 30, dr: 0.3,
+    power: grow(0.5, 0.1),
+    desc: lv => `쓰러진 장수를 바로 다시 놓을 수 있고, 30초 동안 장수 공격 +${pct(grow(0.5, 0.1)(lv))}, 받는 피해 -30%`,
   },
   lb_militia: {
-    name: '의병 봉기', icon: '🙋', target: 'path', cd: 52, count: 3, dur: 15,
-    power: lv => 0.7 + 0.15 * (lv - 1),
-    desc: lv => `길 위에 의병 3명을 불러 ${15}초 동안 적을 막아요 (힘 ${pct(0.7 + 0.15 * (lv - 1))})`,
-  },
-  cc_dash: {
-    name: '의천검 일섬', icon: '🗡️', target: 'point', cd: 18, width: 55, maxDist: 360,
-    power: lv => 3 + 0.6 * (lv - 1),
-    desc: lv => `고른 곳까지 돌진하며 지나가는 적을 베어요 (공격력의 ${pct(3 + 0.6 * (lv - 1))})`,
+    name: '의병 봉기', icon: '🙋', target: 'path', cd: SKILL_CD, dur: 30, count: 4,
+    power: grow(1, 0.2),
+    desc: lv => `고른 길에 의병 4명을 보내 30초 동안 적을 막아요 (보병의 ${pct(grow(1, 0.2)(lv))} 힘)`,
   },
   cc_roar: {
-    name: '패왕의 호령', icon: '📯', target: 'self', cd: 39, dur: 10,
-    power: lv => 0.3 + 0.06 * (lv - 1),
-    desc: lv => `10초 동안 모든 부대 공격력 +${pct(0.3 + 0.06 * (lv - 1))}`,
+    name: '패왕의 호령', icon: '📯', target: 'self', cd: SKILL_CD, dur: 30,
+    power: grow(0.3, 0.06),
+    desc: lv => `사기를 북돋아 30초 동안 모든 부대와 장수 공격 +${pct(grow(0.3, 0.06)(lv))}`,
   },
-  cc_cavalry: {
-    name: '호표기 돌격', icon: '🐎', target: 'point', cd: 52, radius: 130, stun: 1.5,
-    power: lv => 5 + 1 * (lv - 1),
-    desc: lv => `고른 곳에 정예 기병이 돌격해요 (공격력의 ${pct(5 + (lv - 1))}, 잠깐 기절)`,
+  cc_supply: {
+    name: '둔전 징발', icon: '🌾', target: 'self', cd: SKILL_CD,
+    power: grow(0.6, 0.12),
+    desc: lv => `창고를 열어 군량을 바로 받아요 (시작 군량의 ${pct(grow(0.6, 0.12)(lv))})`,
   },
-  sq_rain: {
-    name: '연환궁', icon: '🏹', target: 'point', cd: 18, radius: 110, hits: 6, dur: 2.4,
-    power: lv => 0.7 + 0.14 * (lv - 1),
-    desc: lv => `고른 곳에 화살비 6번 (한 번에 공격력의 ${pct(0.7 + 0.14 * (lv - 1))})`,
+  cc_tiger: {
+    name: '호표기 출격', icon: '🐎', target: 'point', cd: SKILL_CD, radius: 150, stun: 3,
+    power: lv => 10 * (1 + 0.2 * (lv - 1)),
+    desc: lv => `성에서 정예 기병이 달려 나가 고른 곳의 적을 짓밟고 3초 동안 기절시켜요 (위력 ${lvPct(lv)})`,
+  },
+  sq_volley: {
+    name: '궁노 일제 사격', icon: '🏹', target: 'self', cd: SKILL_CD, dur: 30,
+    power: grow(0.4, 0.08),
+    desc: lv => `30초 동안 궁수·책사·투석기와 원거리 장수가 ${pct(grow(0.4, 0.08)(lv))} 더 빨리 쏴요`,
   },
   sq_fire: {
-    name: '화공', icon: '🔥', target: 'point', cd: 39, radius: 110, dur: 6, slow: 0.35,
-    power: lv => 0.45 + 0.09 * (lv - 1),
-    desc: lv => `6초 동안 불바다 (0.5초마다 공격력의 ${pct(0.45 + 0.09 * (lv - 1))}), 적이 느려져요`,
+    name: '화공', icon: '🔥', target: 'point', cd: SKILL_CD, radius: 140, dur: 10, slow: 0.35,
+    power: lv => 0.8 * (1 + 0.2 * (lv - 1)),
+    desc: lv => `병사들이 고른 곳에 불을 질러 10초 동안 불바다, 적이 느려져요 (위력 ${lvPct(lv)}, 동남풍이면 2배)`,
   },
   sq_guard: {
-    name: '강동의 철벽', icon: '🛡️', target: 'self', cd: 52, dur: 10,
-    power: lv => 0.35 + 0.05 * (lv - 1),
-    desc: lv => `10초 동안 모든 부대와 손권이 받는 피해 -${pct(0.35 + 0.05 * (lv - 1))}, 성문 +1`,
+    name: '강동의 철벽', icon: '🛡️', target: 'self', cd: SKILL_CD, dur: 30, gate: 2,
+    power: grow(0.3, 0.05),
+    desc: lv => `30초 동안 모든 부대와 장수가 받는 피해 -${pct(grow(0.3, 0.05)(lv))}, 성문 +2`,
   },
 };
+// Talents and treasure can stretch how long a skill lasts.
+export const skillDur = (def, mods) => (def.dur || 0) * (1 + (mods?.skillDur || 0));
+export const AURA_R = 380; // 군주의 위엄 reaches squads placed this close to the gate
 
 // ---- Equipment -------------------------------------------------------------------
 
@@ -315,54 +317,54 @@ export const GRADES = [
 ];
 export const SLOTS = { weapon: '무기', armor: '갑옷', treasure: '보물' };
 
-// fx keys: atk, hp, def (damage reduction), lordAtk%, lordSpeed%, lordHp%, skillDmg%, skillCd%,
-// troopAtk%, troopHp%, food% (군량 income), startFood, starCost%, attackSpeed%, stratAtk%
+// The lord no longer fights, so it hands its gear to the army: weapons sharpen every squad,
+// armour toughens them, treasure helps orders, supplies and generals.
+// fx keys: troopAtk%, troopHp%, troopDef% (damage taken), genPower%, atk_/hp_<type>%,
+// skillDmg% (skill effect), skillCd%, skillDur%, food% (군량 income), startFood, starCost%, stratAtk%
 export const EQUIPS = {
-  w_iron: { slot: 'weapon', name: '철검', g: 0, icon: '🗡️', fx: { atk: 5 }, price: 120 },
-  w_saber: { slot: 'weapon', name: '환수도', g: 0, icon: '🔪', fx: { atk: 7 }, price: 240 },
-  w_twin: { slot: 'weapon', name: '쌍고검', g: 1, icon: '⚔️', fx: { atk: 11, attackSpeed: 0.1 } },
-  w_guding: { slot: 'weapon', name: '고정도', g: 1, icon: '🗡️', fx: { atk: 12, skillDmg: 0.1 } },
-  w_yitian: { slot: 'weapon', name: '의천검', g: 2, icon: '⚔️', fx: { atk: 17, skillDmg: 0.15 } },
-  w_qinggang: { slot: 'weapon', name: '청강검', g: 2, icon: '🗡️', fx: { atk: 19, attackSpeed: 0.08 } },
-  w_qinglong: { slot: 'weapon', name: '청룡언월도', g: 3, icon: '🐉', fx: { atk: 26, skillDmg: 0.1 } },
-  w_zhangba: { slot: 'weapon', name: '장팔사모', g: 3, icon: '🔱', fx: { atk: 25, attackSpeed: 0.15 } },
-  w_fangtian: { slot: 'weapon', name: '방천화극', g: 3, icon: '🔱', fx: { atk: 30 } },
-  w_heaven: { slot: 'weapon', name: '천하무쌍검', g: 4, icon: '✨', fx: { atk: 38, skillDmg: 0.2 } },
+  w_iron: { slot: 'weapon', name: '철검', g: 0, icon: '🗡️', fx: { troopAtk: 0.03 }, price: 120 },
+  w_saber: { slot: 'weapon', name: '환수도', g: 0, icon: '🔪', fx: { troopAtk: 0.045 }, price: 240 },
+  w_twin: { slot: 'weapon', name: '쌍고검', g: 1, icon: '⚔️', fx: { troopAtk: 0.06, genPower: 0.05 } },
+  w_guding: { slot: 'weapon', name: '고정도', g: 1, icon: '🗡️', fx: { troopAtk: 0.065, skillDmg: 0.08 } },
+  w_yitian: { slot: 'weapon', name: '의천검', g: 2, icon: '⚔️', fx: { troopAtk: 0.09, skillDmg: 0.12 } },
+  w_qinggang: { slot: 'weapon', name: '청강검', g: 2, icon: '🗡️', fx: { troopAtk: 0.1, genPower: 0.06 } },
+  w_qinglong: { slot: 'weapon', name: '청룡언월도', g: 3, icon: '🐉', fx: { troopAtk: 0.12, genPower: 0.1 } },
+  w_zhangba: { slot: 'weapon', name: '장팔사모', g: 3, icon: '🔱', fx: { troopAtk: 0.12, skillDmg: 0.12 } },
+  w_fangtian: { slot: 'weapon', name: '방천화극', g: 3, icon: '🔱', fx: { troopAtk: 0.15 } },
+  w_heaven: { slot: 'weapon', name: '천하무쌍검', g: 4, icon: '✨', fx: { troopAtk: 0.19, skillDmg: 0.15 } },
 
-  a_leather: { slot: 'armor', name: '가죽 갑옷', g: 0, icon: '🦺', fx: { hp: 60 }, price: 100 },
-  a_iron: { slot: 'armor', name: '철갑', g: 0, icon: '🛡️', fx: { hp: 100, def: 0.03 }, price: 260 },
-  a_scale: { slot: 'armor', name: '어린갑', g: 1, icon: '🛡️', fx: { hp: 160, def: 0.05 }, price: 900, shopAfter: 6 },
-  a_bright: { slot: 'armor', name: '명광개', g: 2, icon: '🛡️', fx: { hp: 240, def: 0.08 } },
-  a_silver: { slot: 'armor', name: '백은 갑옷', g: 3, icon: '🛡️', fx: { hp: 340, def: 0.11 } },
-  a_dragon: { slot: 'armor', name: '황금 용린갑', g: 4, icon: '🐲', fx: { hp: 460, def: 0.15 } },
+  a_leather: { slot: 'armor', name: '가죽 갑옷', g: 0, icon: '🦺', fx: { troopHp: 0.04 }, price: 100 },
+  a_iron: { slot: 'armor', name: '철갑', g: 0, icon: '🛡️', fx: { troopHp: 0.05, troopDef: 0.02 }, price: 260 },
+  a_scale: { slot: 'armor', name: '어린갑', g: 1, icon: '🛡️', fx: { troopHp: 0.08, troopDef: 0.03 }, price: 900, shopAfter: 6 },
+  a_bright: { slot: 'armor', name: '명광개', g: 2, icon: '🛡️', fx: { troopHp: 0.11, troopDef: 0.04 } },
+  a_silver: { slot: 'armor', name: '백은 갑옷', g: 3, icon: '🛡️', fx: { troopHp: 0.14, troopDef: 0.05 } },
+  a_dragon: { slot: 'armor', name: '황금 용린갑', g: 4, icon: '🐲', fx: { troopHp: 0.18, troopDef: 0.07 } },
 
   t_bingfa: { slot: 'treasure', name: '병법서', g: 0, icon: '📘', fx: { skillCd: 0.08 }, price: 220 },
   t_hufu: { slot: 'treasure', name: '호부', g: 1, icon: '🐯', fx: { troopHp: 0.08 }, price: 900, shopAfter: 4 },
-  t_seven: { slot: 'treasure', name: '칠성보도', g: 1, icon: '🌟', fx: { lordAtk: 0.15 } },
+  t_seven: { slot: 'treasure', name: '칠성보도', g: 1, icon: '🌟', fx: { genPower: 0.12 } },
   t_taiping: { slot: 'treasure', name: '태평요술서', g: 1, icon: '📗', fx: { skillDmg: 0.2 } },
-  t_dilu: { slot: 'treasure', name: '적로마', g: 2, icon: '🐴', fx: { lordSpeed: 0.35, lordHp: 0.1 } },
+  t_dilu: { slot: 'treasure', name: '적로마', g: 2, icon: '🐴', fx: { atk_cavalry: 0.15, hp_cavalry: 0.15 } },
   t_sunzi: { slot: 'treasure', name: '손자병법', g: 2, icon: '📜', fx: { troopAtk: 0.1 } },
   t_mengde: { slot: 'treasure', name: '맹덕신서', g: 2, icon: '📕', fx: { starCost: 0.15, food: 0.05 } },
   t_seal: { slot: 'treasure', name: '전국옥새', g: 3, icon: '🀄', fx: { startFood: 80, food: 0.12 } },
-  t_redhare: { slot: 'treasure', name: '적토마', g: 3, icon: '🐎', fx: { lordSpeed: 0.5, lordAtk: 0.15 } },
+  t_redhare: { slot: 'treasure', name: '적토마', g: 3, icon: '🐎', fx: { atk_cavalry: 0.2, hp_cavalry: 0.2, skillDur: 0.15 } },
   t_feather: { slot: 'treasure', name: '백우선', g: 4, icon: '🪶', fx: { skillCd: 0.2, stratAtk: 0.25 } },
 };
 
 const FX_TEXT = {
-  atk: v => `군주 공격 +${Math.round(v)}`,
-  hp: v => `군주 체력 +${Math.round(v)}`,
-  def: v => `받는 피해 -${pct(v)}`,
-  lordAtk: v => `군주 공격 +${pct(v)}`,
-  lordSpeed: v => `군주 이동 +${pct(v)}`,
-  lordHp: v => `군주 체력 +${pct(v)}`,
-  skillDmg: v => `스킬 피해 +${pct(v)}`,
-  skillCd: v => `스킬 대기 -${pct(v)}`,
   troopAtk: v => `모든 부대 공격 +${pct(v)}`,
   troopHp: v => `모든 부대 체력 +${pct(v)}`,
+  troopDef: v => `모든 부대 받는 피해 -${pct(v)}`,
+  genPower: v => `장수 체력·공격 +${pct(v)}`,
+  atk_cavalry: v => `기마병 공격 +${pct(v)}`,
+  hp_cavalry: v => `기마병 체력 +${pct(v)}`,
+  skillDmg: v => `스킬 효과 +${pct(v)}`,
+  skillCd: v => `스킬 대기 -${pct(v)}`,
+  skillDur: v => `스킬 지속 +${pct(v)}`,
   food: v => `군량 +${pct(v)}`,
   startFood: v => `시작 군량 +${Math.round(v)}`,
   starCost: v => `승급 비용 -${pct(v)}`,
-  attackSpeed: v => `군주 공격 속도 +${pct(v)}`,
   stratAtk: v => `책사 부대 공격 +${pct(v)}`,
 };
 
@@ -384,7 +386,7 @@ export const ITEM_KEYS = ['potion', 'bomb', 'wall'];
 export const ITEMS = {
   potion: {
     name: '회복 약초', icon: '🌿', price: 50, radius: 150, heal: 0.45,
-    desc: '고른 곳 근처의 부대와 군주 체력을 45% 회복해요',
+    desc: '고른 곳 근처의 부대와 장수 체력을 45% 회복해요',
   },
   bomb: {
     name: '벽력탄', icon: '💣', price: 70, radius: 105, dmg: 190,
@@ -412,10 +414,10 @@ export const NO_REWARD_GAP = 2; // lord level ≥ recommended + this → replays
 
 // Difficulty is chosen with the lord for a new game. 지옥 appears once an ending has been seen on this device.
 export const DIFFS = [
-  { key: 'easy', name: '쉬움', icon: '🌱', hp: 1.45, atk: 1.3, gold: 0.85, desc: '적이 약해요. 처음 하는 사람에게 추천' },
-  { key: 'normal', name: '보통', icon: '⚔️', hp: 2.94, atk: 2.13, gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
-  { key: 'hard', name: '어려움', icon: '🔥', hp: 3.45, atk: 2.39, gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
-  { key: 'hell', name: '지옥', icon: '💀', hp: 4.06, atk: 2.73, gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
+  { key: 'easy', name: '쉬움', icon: '🌱', hp: 1.33, atk: 1.2, gold: 0.85, desc: '적이 약해요. 처음 하는 사람에게 추천' },
+  { key: 'normal', name: '보통', icon: '⚔️', hp: 2.41, atk: 1.75, gold: 1, desc: '상성을 생각하며 싸우면 이길 수 있어요' },
+  { key: 'hard', name: '어려움', icon: '🔥', hp: 2.93, atk: 2.03, gold: 1.25, desc: '승급과 스킬, 아이템을 잘 써야 해요' },
+  { key: 'hell', name: '지옥', icon: '💀', hp: 3.45, atk: 2.32, gold: 1.6, desc: '엔딩을 본 군주만 도전할 수 있는 진짜 시험' },
 ];
 export const diffOf = save => DIFFS[save?.diff ?? 1] || DIFFS[1];
 // Harder difficulties bite less in the first stages (a new 지옥 game still starts at Lv 1).

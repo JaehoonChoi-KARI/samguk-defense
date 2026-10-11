@@ -178,7 +178,7 @@ const game = {
     if (!b) return;
     consumeItems(this.save, b.sim.itemsUsed);
     this.persist();
-    this.startBattle(b.stageIdx);
+    this.startBattle(b.stageIdx, b.tut && !b.tut.finished ? { tutorial: true } : {});
   },
 
   quitBattle() {

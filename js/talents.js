@@ -11,15 +11,15 @@ const troopFx = (types, key, v) => Object.fromEntries(types.map(t => [`${key}_${
 // fx is per point; say(total fx) describes the node at a given number of points.
 export const TALENT_TREES = [
   {
-    key: 'lord', name: '군주', icon: '👑', desc: '군주와 군주 스킬을 강하게',
+    key: 'lord', name: '군주', icon: '👑', desc: '성에서 내리는 군주 스킬을 강하게',
     nodes: [
       { key: 'sk1', row: 0, max: MAX_SKILL_LEVEL - 1, skill: 0 },
-      { key: 'lordHp', row: 0, max: 3, icon: '❤️', name: '강인한 몸', fx: { lordHp: 0.12 }, say: f => `군주 체력 +${pct(f.lordHp)}` },
+      { key: 'longCmd', row: 0, max: 3, icon: '⏳', name: '긴 호령', fx: { skillDur: 0.1 }, say: f => `스킬 지속 시간 +${pct(f.skillDur)}` },
       { key: 'sk2', row: 1, max: MAX_SKILL_LEVEL - 1, skill: 1 },
-      { key: 'lordAtk', row: 1, max: 3, icon: '💪', name: '무예 수련', fx: { lordAtk: 0.1 }, say: f => `군주 공격 +${pct(f.lordAtk)}` },
+      { key: 'aura', row: 1, max: 3, icon: '🏯', name: '군주의 위엄', fx: { aura: 0.05 }, say: f => `성 가까이(점선 안) 놓은 부대 공격 +${pct(f.aura)}` },
       { key: 'sk3', row: 2, max: MAX_SKILL_LEVEL - 1, skill: 2 },
-      { key: 'skillCd', row: 2, max: 3, icon: '⏱️', name: '신속한 지휘', fx: { skillCd: 0.06 }, say: f => `스킬 대기 시간 -${pct(f.skillCd)}` },
-      { key: 'mandate', row: 3, max: 1, icon: '🌟', name: '천명', fx: { skillDmg: 0.2, lordRevive: 1 }, say: () => '스킬 피해 +20%, 군주가 쓰러져도 6초 만에 다시 일어나요' },
+      { key: 'skillCd', row: 2, max: 3, icon: '⏱️', name: '신속한 지휘', fx: { skillCd: 0.07 }, say: f => `스킬 대기 시간 -${pct(f.skillCd)}` },
+      { key: 'mandate', row: 3, max: 1, icon: '🌟', name: '천명', fx: { skillDmg: 0.2, skillDur: 0.2 }, say: () => '스킬 효과 +20%, 지속 시간 +20%' },
     ],
   },
   {
@@ -51,12 +51,16 @@ export const TALENT_TREES = [
 export const TALENTS = Object.fromEntries(TALENT_TREES.flatMap(t => t.nodes.map(n => [n.key, { ...n, tree: t.key }])));
 export const TALENT_KEYS = Object.keys(TALENTS);
 
+// Old saves had body talents for a lord that fought on the field; their points move to the
+// nodes that replaced them (same rows, same maximum).
+export const TALENT_RENAMED = { lordHp: 'longCmd', lordAtk: 'aura' };
+
 // The order the 추천 button (and the balance bot) spends points in: skills first, then the
-// lord's body, then troops and supplies.
+// lord's orders, then troops and supplies.
 export const TALENT_PLAN = [
-  'sk1', 'sk1', 'lordHp', 'sk2', 'sk2', 'sk1', 'sk2', 'lordAtk', 'sk3', 'sk3', 'sk3', 'sk1', 'sk2', 'sk3',
-  'skillCd', 'skillCd', 'skillCd', 'mandate', 'meleeHp', 'rangedAtk', 'lordHp', 'lordAtk', 'meleeHp', 'rangedAtk',
-  'stock', 'farm', 'lordHp', 'lordAtk', 'meleeHp', 'rangedAtk',
+  'sk1', 'sk1', 'longCmd', 'sk2', 'sk2', 'sk1', 'sk2', 'aura', 'sk3', 'sk3', 'sk3', 'sk1', 'sk2', 'sk3',
+  'skillCd', 'skillCd', 'skillCd', 'mandate', 'meleeHp', 'rangedAtk', 'longCmd', 'aura', 'meleeHp', 'rangedAtk',
+  'stock', 'farm', 'longCmd', 'aura', 'meleeHp', 'rangedAtk',
   ...TALENT_KEYS,
 ];
 
@@ -143,8 +147,13 @@ export function autoTalents(save, plan = TALENT_PLAN) {
 // Throws away anything a save cannot have (unknown nodes, too many points, closed rows).
 export function cleanTalents(save) {
   const t = {};
+  const src = { ...save.talents };
+  for (const [from, to] of Object.entries(TALENT_RENAMED)) {
+    if (src[from] && !src[to]) src[to] = src[from];
+    delete src[from];
+  }
   for (const k of TALENT_KEYS) {
-    const v = Math.floor(save.talents?.[k] || 0);
+    const v = Math.floor(src[k] || 0);
     if (v > 0) t[k] = Math.min(v, TALENTS[k].max);
   }
   save.talents = t;

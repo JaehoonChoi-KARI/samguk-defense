@@ -204,7 +204,7 @@ export const STORIES = {
         loc: 'bowang',
         enemy: 'wei',
         terrain: 'forest',
-        mix: { cavalry: 3, infantry: 3, spear: 2, archer: 1 },
+        mix: { cavalry: 2, infantry: 3, spear: 2, archer: 2 },
         boss: { name: '하후돈', title: '조조군 선봉', type: 'cavalry', skill: 'charge' },
         reward: 't_dilu',
         intro: [

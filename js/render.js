@@ -1,6 +1,6 @@
 // Draws a battle: cached terrain + roads, then units, shots and effects every frame.
 
-import { TROOPS, FACTIONS, LORDS, SKILLS, ITEMS, GATE_HP, COUNTER_MARK, GENERALS, GEN_SPECIALS, GROUND, FORMATIONS, DUEL } from './data.js';
+import { TROOPS, FACTIONS, LORDS, SKILLS, ITEMS, GATE_HP, COUNTER_MARK, GENERALS, GEN_SPECIALS, GROUND, FORMATIONS, DUEL, AURA_R } from './data.js';
 import { WORLD_W, WORLD_H, nearestOnPath, pathAt } from './maps.js';
 import { CELL, cellKey, inWater } from './field.js';
 import { drawSoldier, drawSquad, drawLord, drawSpot, drawGate, drawWall, drawGeneral, shadow } from './sprites.js';
@@ -18,6 +18,18 @@ const TERRAIN = {
 
 const faction = key => FACTIONS[key] || FACTIONS.yellow;
 const UNIT = 1.25; // soldiers are drawn a bit larger than the map grid so they read well on an iPad
+// What the lord's orders look like when they go out from the castle.
+const ORDER_SAY = {
+  lb_heal: { text: '인덕의 손길! 체력 회복', color: '#7dff9a' },
+  lb_oath: { text: '도원결의! 장수가 힘을 내요', color: '#ffb0c8' },
+  lb_militia: { text: '의병이 일어났다!', color: '#fff3b0' },
+  cc_roar: { text: '사기 충천! 공격 UP', color: '#ffb0a0' },
+  cc_supply: { text: '군량 도착!', color: '#ffe08a' },
+  cc_tiger: { text: '호표기 출격!', color: '#ffd54f' },
+  sq_volley: { text: '일제 사격! 더 빨리 쏴요', color: '#d8f0ff' },
+  sq_fire: { text: '화공!', color: '#ffb070' },
+  sq_guard: { text: '철벽 방어!', color: '#bfe6ff' },
+};
 
 export class BattleView {
   constructor(sim) {
@@ -482,12 +494,15 @@ export class BattleView {
           this.burst(e.x, e.y - 8, '#ffd54f', 14);
           this.text(e.x, e.y - 50, `${e.name} 후퇴! ${Math.round(e.wait)}초 뒤 다시 배치`, '#ffb0a0', 16, 1.8);
           break;
-        case 'lordDown':
-          this.text(e.x, e.y - 60, `군주가 쓰러졌다! ${Math.round(e.wait)}초 뒤 성문에서 돌아와요`, '#ff8a8a', 16, 2);
+        case 'order': {
+          // the lord calls from the castle wall; orders given together stack their words
+          const say = ORDER_SAY[e.key];
+          this.orderStack = this.t - (this.orderT ?? -9) < 1.5 ? (this.orderStack || 0) + 1 : 0;
+          this.orderT = this.t;
+          this.ring(e.x, e.y - 60, 20, 320, say.color, 0.8);
+          this.text(e.x + (e.dir || 1) * 190, e.y - 150 + (this.orderStack % 3) * 30, e.amount ? `군량 +${e.amount}` : say.text, say.color, 22, 1.6);
           break;
-        case 'revive':
-          this.ring(e.x, e.y, 10, 60, '#fff', 0.6);
-          break;
+        }
         case 'slash':
           this.fx.push({ k: 'slash', x: e.x, y: e.y - 12, t: 0, life: 0.18, a: Math.random() * 6 });
           break;
@@ -519,19 +534,13 @@ export class BattleView {
         case 'dash':
           this.fx.push({ k: 'dash', x: e.x, y: e.y, x2: e.x2, y2: e.y2, t: 0, life: 0.35 });
           break;
-        case 'roar':
-          this.ring(e.x, e.y, 20, 260, '#ff6b5a', 0.7);
-          this.text(e.x, e.y - 70, '공격력 UP!', '#ffb0a0', 20, 1.2);
-          break;
+
         case 'charge':
           this.ring(e.x, e.y, 10, e.r, '#ffd54f', 0.5);
           this.burst(e.x, e.y, '#c9a26a', 22);
           this.shake = Math.max(this.shake, 0.3);
           break;
-        case 'guard':
-          this.ring(e.x, e.y, 20, 260, '#8fd0ff', 0.7);
-          this.text(e.x, e.y - 70, '철벽 방어!', '#bfe6ff', 20, 1.2);
-          break;
+
         case 'wall':
           this.burst(e.x, e.y, '#8a5a2b', 10);
           break;
@@ -583,11 +592,23 @@ export class BattleView {
     // gate
     const g = sim.layout.gate;
     drawGate(ctx, g.x, g.y, g.dir, this.us, sim.gate / GATE_HP);
+    this.drawCastleLord(ctx, sim, g);
 
     // zones under the units
     for (const z of sim.zones) this.drawZone(ctx, z);
 
-    // while placing: the free cells light up
+    // while placing: the free cells light up, and 군주의 위엄 shows how far it reaches
+    if (ui.placing && sim.mods.aura) {
+      ctx.beginPath();
+      ctx.arc(g.x, g.y, AURA_R, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,215,90,0.08)';
+      ctx.fill();
+      ctx.setLineDash([12, 8]);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(255,215,90,0.7)';
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     if (ui.placing) {
       ctx.fillStyle = 'rgba(255,255,210,0.2)';
       for (const cell of sim.field.list) {
@@ -623,7 +644,7 @@ export class BattleView {
       this.homeFlag(ctx, q.hx, q.hy, ui.squad === q);
     }
 
-    // range circles for the selected squad / the lord being dragged
+    // range circle for the selected squad
     if (ui.squad && sim.squads.includes(ui.squad)) {
       const q = ui.squad;
       this.rangeCircle(ctx, q.hx, q.hy, q.range, '#ffffff');
@@ -637,29 +658,13 @@ export class BattleView {
     for (const f of sim.foes) list.push({ y: f.y, d: () => { this.drawFoe(ctx, f); if (f.state === 'flee') this.fleeMark(ctx, f.x, f.y - 38); } });
     for (const m of sim.militia) list.push({ y: m.y, d: () => this.drawMilitia(ctx, m) });
     for (const w of sim.walls) list.push({ y: w.y, d: () => { drawWall(ctx, w); this.hpBar(ctx, w.x, w.y - 32, 36, w.hp / w.maxHp, '#d8a25a'); } });
-    if (!sim.lord.dead) list.push({ y: sim.lord.y, d: () => this.drawLordUnit(ctx, sim.lord, ui) });
     for (const c of this.fx) if (c.k === 'corpse') list.push({ y: c.y - 1, d: () => this.drawCorpse(ctx, c) });
     list.sort((a, b) => a.y - b.y);
     for (const it of list) it.d();
 
-    // lord drag line
-    if (ui.lordDrag && !sim.lord.dead) {
-      const L = sim.lord;
-      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-      ctx.setLineDash([8, 6]);
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(L.x, L.y);
-      ctx.lineTo(ui.lordDrag.x, ui.lordDrag.y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      this.marker(ctx, ui.lordDrag.x, ui.lordDrag.y, '#fff');
-    } else if (!sim.lord.dead && Math.hypot(sim.lord.hx - sim.lord.x, sim.lord.hy - sim.lord.y) > 12 && !sim.lord.engage) {
-      this.marker(ctx, sim.lord.hx, sim.lord.hy, 'rgba(255,255,255,0.6)');
-    }
-
     for (const p of sim.projectiles) this.drawProjectile(ctx, p);
     this.drawFx(ctx, dt);
+    if (ui.tutMark) this.drawTutMark(ctx, ui.tutMark);
 
     // targeting circle
     if (ui.aim) {
@@ -815,6 +820,7 @@ export class BattleView {
     const tags = [];
     if (g.ground) tags.push(`${GROUND[g.ground].icon} ${GROUND[g.ground].name}`);
     for (const f of g.forms || []) tags.push(`${FORMATIONS[f].name}!`);
+    if (g.aura) tags.push('🏯 군주 곁');
     if (tags.length) {
       ctx.font = 'bold 17px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
       ctx.textAlign = 'center';
@@ -973,14 +979,42 @@ export class BattleView {
     }
   }
 
-  drawLordUnit(ctx, L, ui) {
-    if (L.dashT > 0) ctx.globalAlpha = 0.6;
-    drawLord(ctx, L.key, L.x, L.y, {
-      face: L.face, walk: this.t, moving: L.moving, atk: L.atkAnim / 0.3,
-      ring: ui.lordDrag ? '#fff' : 'rgba(255,240,150,0.9)', scale: 1.15,
-    });
-    ctx.globalAlpha = 1;
-    this.hpBar(ctx, L.x, L.y - 74, 40, L.hp / L.maxHp, '#7de3ff');
+  // The tutorial points at a spot: a pulsing ring with a bouncing arrow above it.
+  drawTutMark(ctx, m) {
+    const p = 0.5 + 0.5 * Math.sin(this.t * 6);
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = `rgba(255,216,74,${0.6 + 0.4 * p})`;
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, 26 + p * 8, 0, Math.PI * 2);
+    ctx.stroke();
+    const y = m.y - 62 - p * 12;
+    ctx.fillStyle = '#ffd84a';
+    ctx.strokeStyle = '#5a3a00';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(m.x, y + 28);
+    ctx.lineTo(m.x - 18, y + 6);
+    ctx.lineTo(m.x - 7, y + 6);
+    ctx.lineTo(m.x - 7, y - 12);
+    ctx.lineTo(m.x + 7, y - 12);
+    ctx.lineTo(m.x + 7, y + 6);
+    ctx.lineTo(m.x + 18, y + 6);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.fill();
+  }
+
+  // The lord watches from the castle wall above the gate and glows while an order is running.
+  drawCastleLord(ctx, sim, g) {
+    const x = g.x + g.dir * 35, y = g.y - 96;
+    if (sim.skills.some(s => s && s.activeT > 0)) {
+      const pulse = 0.5 + 0.5 * Math.sin(this.t * 5);
+      ctx.beginPath();
+      ctx.arc(x, y - 30, 40 + pulse * 6, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,220,110,${0.18 + pulse * 0.12})`;
+      ctx.fill();
+    }
+    drawLord(ctx, sim.setup.lordKey, x, y, { face: g.dir, scale: 0.9 });
   }
 
   drawCorpse(ctx, c) {
