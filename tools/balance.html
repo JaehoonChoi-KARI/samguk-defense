@@ -62,7 +62,8 @@ const hpK = +(P.get('hp') || 1), atkK = +(P.get('atk') || 1);
 const rows = [];
 for (const lord of lords) {
   for (let n = a; n <= (b || a); n++) {
-    const stage = STORIES[lord].stages[n - 1];
+    // &mix=cavalry:3,spear:2: try another enemy mix for the stage (same waves seed)
+    const stage = P.has('mix') ? { ...STORIES[lord].stages[n - 1], mix: Object.fromEntries(P.get('mix').split(',').map(kv => kv.split(':')).map(([k, v]) => [k, +v])) } : STORIES[lord].stages[n - 1];
     let won = 0, gate = 0, time = 0, lost = 0, leaked = 0, bossLoss = 0, stalls = [];
     let peak = 0;
     for (let r = 0; r < runs; r++) {

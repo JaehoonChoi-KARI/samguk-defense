@@ -1,7 +1,7 @@
 // Game rules and numbers: troop types and counters, lords and their orders, equipment,
 // consumable items and growth formulas. Balance knobs live here.
 
-export const VERSION = '1.0.17'; // keep in sync with CACHE in sw.js
+export const VERSION = '1.0.18'; // keep in sync with CACHE in sw.js
 export const STAGE_COUNT = 20;
 export const GATE_HP = 60;
 export const MAX_LORD_LEVEL = 30;
@@ -297,10 +297,11 @@ export const SKILLS = {
     power: grow(0.5, 0.1),
     desc: lv => `쓰러진 장수를 바로 다시 놓을 수 있고, 30초 동안 장수 공격 +${pct(grow(0.5, 0.1)(lv))}, 받는 피해 -30%`,
   },
+  // rush = how far up the road toward the enemy they charge; hit = damage to each enemy they run into
   lb_militia: {
-    name: '의병 봉기', icon: '🙋', target: 'path', cd: SKILL_CD, dur: 30, count: 4,
+    name: '의병 봉기', icon: '🙋', target: 'path', cd: SKILL_CD, dur: 30, count: 4, rush: 220, hit: 6,
     power: grow(1, 0.2),
-    desc: lv => `고른 길에 의병 4명을 보내 30초 동안 적을 막아요 (보병의 ${pct(grow(1, 0.2)(lv))} 힘)`,
+    desc: lv => `고른 길에서 의병 4명이 적진으로 돌격해 부딪힌 적을 베고(위력 ${lvPct(lv)}), 멈춘 곳에서 30초 동안 길을 막아요 (보병의 ${pct(grow(1, 0.2)(lv))} 힘)`,
   },
   cc_roar: {
     name: '패왕의 호령', icon: '📯', target: 'self', cd: SKILL_CD, dur: 30,
@@ -433,7 +434,7 @@ export const ITEMS = {
 
 export const stageHpMult = n => 1.088 ** (n - 1); // n = 1..20
 export const stageAtkMult = n => 1.07 ** (n - 1);
-export const stageGold = n => Math.round(110 * 1.16 ** (n - 1));
+export const stageGold = n => Math.round(165 * 1.16 ** (n - 1));
 export const stageExp = n => Math.round(60 * 1.18 ** (n - 1));
 export const starGold = n => Math.round(stageGold(n) * 0.25);
 export const startFood = n => 150 + 20 * (n - 1);
@@ -441,7 +442,8 @@ export const killFood = (type, n) => Math.round(FOES[type].reward * (1 + 0.04 * 
 export const PASSIVE_FOOD = 1; // per second while a wave is running
 export const recLevel = n => n;
 export const REPLAY_RATE = 0.5;
-export const NO_REWARD_GAP = 2; // lord level ≥ recommended + this → replays give nothing
+export const NO_REWARD_GAP = 2; // lord level ≥ recommended + this → replays give only LOW_REWARD of the usual
+export const LOW_REWARD = 0.25;
 
 // Difficulty is chosen with the lord for a new game. 지옥 appears once an ending has been seen on this device.
 // shp / satk toughen the soldiers alone (not the enemy general): 쉬움 stays easy with a plan but

@@ -19,6 +19,7 @@ const REGEN_RATE = 0.02; // of max HP per second
 const NEXT_WAVE_WAIT = 25; // seconds between one wave fully marching in and the next
 const EARLY_BONUS = 2; // 군량 per second skipped
 const MAX_RAIDERS = 2 * HORDE;
+const MILITIA_RUSH = 260; // 의병 봉기: running speed of the charge
 const RETARGET = 70; // an arrow whose soldier already fell hits another this close
 const BOSS_ENGAGE = 150; // an enemy general stops to fight our units this close to it
 
@@ -94,7 +95,7 @@ export class Sim {
   blockers() {
     const out = [];
     for (const s of this.squads) if (holdsRoad(s.type) && !s.march) out.push(s); // marching to its 배치: holds nobody
-    out.push(...this.militia, ...this.walls);
+    out.push(...this.militia.filter(m => m.rushTo == null), ...this.walls); // charging militia hold nobody yet
     return out;
   }
 
@@ -440,14 +441,19 @@ export class Sim {
         order();
         break;
       case 'lb_militia': {
+        // they charge up the road at the enemy, cutting down everyone they run into, then hold the road there
         const T = this.setup.troops.infantry;
         const g = s.pathHit;
+        const rush = { hit: new Set(), dmg: this.setup.power * def.hit * p };
+        const to = Math.max(30, g.d - def.rush);
         for (let k = 0; k < def.count; k++) {
-          const q = pathAt(this.paths[g.path], Math.max(0, g.d + (k - 1.5) * 24));
+          const d = Math.max(0, g.d + (k - 1.5) * 24);
+          const q = pathAt(this.paths[g.path], d);
           this.militia.push({
             kind: 'militia', id: this.nextId++, type: 'infantry', x: q.x, y: q.y,
             hp: T.hp * p, maxHp: T.hp * p, atk: T.atk * p, cd: 1, cdT: 0.3, range: 50, block: 2,
             blocking: [], t: dur, lastHit: -99, atkAnim: 0, face: 1,
+            path: g.path, d, rushTo: Math.max(0, to + (k - 1.5) * 24), rush, walkT: 0,
           });
         }
         this.emit({ k: 'summon', x, y });
@@ -1281,6 +1287,23 @@ export class Sim {
       m.t -= dt;
       m.atkAnim = Math.max(0, m.atkAnim - dt);
       if (m.t <= 0) { this.removeAlly(m); continue; }
+      if (m.rushTo != null) {
+        // still charging: every enemy it runs into takes one big blow (once per charge) and staggers
+        m.d = Math.max(m.rushTo, m.d - MILITIA_RUSH * dt);
+        const q = pathAt(this.paths[m.path], m.d);
+        m.x = q.x; m.y = q.y;
+        m.face = Math.cos(q.ang) >= 0 ? -1 : 1;
+        m.walkT += dt;
+        for (const f of this.foes.slice()) {
+          if (f.hp <= 0 || m.rush.hit.has(f) || Math.hypot(f.x - m.x, f.y - m.y) > 34) continue;
+          m.rush.hit.add(f);
+          f.stunT = Math.max(f.stunT, 0.6);
+          m.atkAnim = 0.3;
+          this.hitFoe(f, m.rush.dmg, null, m);
+        }
+        if (m.d <= m.rushTo) m.rushTo = null;
+        continue;
+      }
       m.cdT -= dt;
       if (m.cdT > 0) continue;
       const t = m.blocking.find(f => f.hp > 0) || this.pickTarget(m, m.range);

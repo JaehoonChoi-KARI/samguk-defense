@@ -58,6 +58,7 @@ export function buildWaves(stage, n, pathCount, crowd = 1, cap = Infinity) {
       counts[t] = (counts[t] || 0) + 1;
       budget -= WEIGHT[t];
     }
+
     const groups = [];
     let at = 0;
     const order = Object.keys(counts).sort((a, b) => (a === main ? -1 : b === main ? 1 : 0));
@@ -74,6 +75,12 @@ export function buildWaves(stage, n, pathCount, crowd = 1, cap = Infinity) {
         left -= size;
         gi++;
       }
+    }
+    // a stage can thin out a type (stage.fewer = { cavalry: 0.5 }): each group of it is smaller and
+    // spread over the same time, so they come fewer and further apart; the waves stay the same
+    for (const g of groups) {
+      const k = stage.fewer?.[g.type];
+      if (k) { g.count = Math.max(1, Math.round(g.count * k)); g.gap /= k; }
     }
     // over the cap: fewer soldiers, each one tougher (boost), marching just as long
     const size = groups.reduce((a, g) => a + g.count, 0);

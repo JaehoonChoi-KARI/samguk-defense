@@ -1,7 +1,7 @@
 // Draws a battle: cached terrain + roads, then units, shots and effects every frame.
 
 import { TROOPS, FACTIONS, LORDS, SKILLS, ITEMS, GATE_HP, COUNTER_MARK, GENERALS, GEN_SPECIALS, GROUND, FORMATIONS, DUEL, AURA_R } from './data.js';
-import { WORLD_W, WORLD_H, nearestOnPath, pathAt } from './maps.js';
+import { WORLD_W, WORLD_H, nearestOnPath, nearestOnPaths, pathAt } from './maps.js';
 import { CELL, cellKey, inWater } from './field.js';
 import { drawSoldier, drawSquad, drawLord, drawSpot, drawGate, drawWall, drawGeneral, shadow } from './sprites.js';
 import { rng } from './waves.js';
@@ -720,6 +720,37 @@ export class BattleView {
         this.homeFlag(ctx, x, y, true);
       }
     } else if (ui.aim) {
+      // 의병 봉기: the stretch of road the militia will charge up, toward the enemy
+      const rushDef = ui.aim.kind === 'skill' ? SKILLS[sim.skills[ui.aim.i]?.key] : null;
+      if (rushDef?.rush && ui.aim.x !== undefined) {
+        const g = nearestOnPaths(sim.paths, ui.aim.x, ui.aim.y);
+        if (g.dist <= 150) {
+          const path = sim.paths[g.path], to = Math.max(30, g.d - rushDef.rush);
+          // a dark edge so it shows on the sandy road
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.beginPath();
+          for (let d = g.d; d >= to; d -= 8) { const q = pathAt(path, d); d === g.d ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y); }
+          ctx.strokeStyle = 'rgba(110,50,0,0.6)';
+          ctx.lineWidth = 24;
+          ctx.stroke();
+          ctx.strokeStyle = 'rgba(255,190,40,0.9)';
+          ctx.lineWidth = 16;
+          ctx.stroke();
+          const e = pathAt(path, to), b = pathAt(path, to + 10);
+          const a = Math.atan2(e.y - b.y, e.x - b.x);
+          ctx.beginPath();
+          ctx.moveTo(e.x + Math.cos(a) * 26, e.y + Math.sin(a) * 26);
+          ctx.lineTo(e.x + Math.cos(a + 2.4) * 22, e.y + Math.sin(a + 2.4) * 22);
+          ctx.lineTo(e.x + Math.cos(a - 2.4) * 22, e.y + Math.sin(a - 2.4) * 22);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(255,190,40,0.95)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(110,50,0,0.8)';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+        }
+      }
       ctx.beginPath();
       ctx.arc(ui.aim.x, ui.aim.y, ui.aim.r, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(255,220,120,0.18)';
@@ -976,7 +1007,7 @@ export class BattleView {
   }
 
   drawMilitia(ctx, m) {
-    drawSoldier(ctx, 'infantry', m.x, m.y, { color: '#c8b07a', dark: '#6b5a3a' }, { face: m.face, atk: m.atkAnim / 0.3, hat: 'straw', scale: UNIT });
+    drawSoldier(ctx, 'infantry', m.x, m.y, { color: '#c8b07a', dark: '#6b5a3a' }, { face: m.face, atk: m.atkAnim / 0.3, hat: 'straw', scale: UNIT, walk: m.walkT || 0, moving: m.rushTo != null });
     this.hpBar(ctx, m.x, m.y - 40, 22, m.hp / m.maxHp, '#e0d080');
   }
 

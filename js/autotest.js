@@ -4,7 +4,7 @@
 // Scenes: title, slots, lord, story, base, map, prep, battle, boss, result, barracks, lordinfo, equip, counters
 
 import { STORIES } from './stories.js';
-import { TROOPS, TROOP_KEYS, LORD_KEYS, EQUIPS, FACTIONS, STAGE_COUNT, BOSS_SKILLS, TROOP_UNLOCK, GENERALS, CHALLENGES, stageChallenge, LORDS, SKILL_CD, GATE_HP, fxText, equipFx } from './data.js';
+import { TROOPS, TROOP_KEYS, LORD_KEYS, EQUIPS, FACTIONS, STAGE_COUNT, BOSS_SKILLS, TROOP_UNLOCK, GENERALS, CHALLENGES, stageChallenge, LORDS, SKILL_CD, GATE_HP, fxText, equipFx, LOW_REWARD } from './data.js';
 import { PLACES, stageLayout, pathAt, nearestOnPaths } from './maps.js';
 import { stageField, cellKey, CELL } from './field.js';
 import { buildWaves } from './waves.js';
@@ -71,6 +71,14 @@ function dataChecks() {
       if (F.list.length < 50) fail(`${s.id}: only ${F.list.length} build cells`);
       const w = buildWaves(s, n, L.paths.length);
       if (!w.length || !w[w.length - 1].boss) fail(`${s.id}: waves`);
+      // stage.fewer thins a type out but keeps the waves: same count, same main types, same length
+      if (s.fewer) {
+        const full = buildWaves({ ...s, fewer: null }, n, L.paths.length);
+        for (const [t, k] of Object.entries(s.fewer)) {
+          const c = ws => ws.reduce((a, x) => a + x.groups.filter(g => g.type === t).reduce((b, g) => b + g.count, 0), 0);
+          if (Math.abs(c(w) / c(full) - k) > 0.08 || w.length !== full.length || w.some((x, i) => Math.abs(x.length - full[i].length) > 0.01)) fail(`${s.id}: fewer ${t} ${c(w)}/${c(full)}`);
+        }
+      }
     });
   }
   for (const fac of ['shu', 'wei', 'wu']) {
@@ -349,6 +357,16 @@ function botBattles() {
     const r1 = applyResult(sv, STORIES.liubei, { stageIdx: 0, won: true, stars: 3, gate: 20, kills: 10, itemsUsed: {}, challenge: { ...ch, done: true } });
     const r2 = applyResult(sv, STORIES.liubei, { stageIdx: 0, won: true, stars: 3, gate: 20, kills: 10, itemsUsed: {}, challenge: { ...ch, done: true } });
     if (!r1.challenge || r2.challenge || !sv.stages[0].ch) fail('challenge reward');
+    // replays pay half; a lord far above the stage still gets a quarter of that, never nothing
+    {
+      const sv2 = defaultSave('liubei');
+      const win = { stageIdx: 2, won: true, stars: 1, gate: 20, kills: 10, itemsUsed: {} };
+      sv2.level = 3; const first = applyResult(sv2, STORIES.liubei, win);
+      sv2.level = 3; const again = applyResult(sv2, STORIES.liubei, win);
+      sv2.level = 9; const low = applyResult(sv2, STORIES.liubei, win);
+      if (!first.first || again.sleep || !(again.gold > 0) || !low.sleep || Math.abs(low.gold - again.gold * LOW_REWARD) > 1 || !(low.exp > 0)) fail(`replay rewards: ${first.gold}/${again.gold}/${low.gold}`);
+      out.checks.push({ stage3Gold: { first: first.gold, again: again.gold, low: low.gold } });
+    }
     out.checks.push({ weather: { wind: sim.weather.name, fog: a && Math.round(a.range) }, challengeGold: r1.challenge });
   }
   // talents: rows open with points above, skills need the lord level, points come back out
@@ -433,6 +451,27 @@ function botBattles() {
       if (sim.buff('atk') || sim.buff('guard') || sim.buff('rate') || sim.buff('regen')) fail(`${lord}: order still running after 31s`);
       if (!(sim.skills[0].cdT > 100)) fail(`${lord}: cooldown ran out early (${sim.skills[0].cdT})`);
       res[lord] = LORDS[lord].skills.join('/');
+    }
+    // 의병 봉기: the militia charge up the road through the enemy (each one hit once), then hold the road
+    {
+      const s = expectedSave('liubei', 8, 1, { talents: 'none' });
+      const sim = new Sim(battleSetup(s, 7, STORIES.liubei.stages[7], { seed: 'rush' }));
+      sim.start();
+      sim.spawnQueue = [];
+      sim.nextT = 1e9;
+      const p = sim.paths[0];
+      for (let i = 0; i < 6; i++) sim.spawnFoe('infantry', 0, false, p.len * 0.5 - 60 - i * 15);
+      const hp0 = sim.foes.reduce((a, f) => a + f.hp, 0);
+      const at = pathAt(p, p.len * 0.5);
+      const k = sim.skills.findIndex(x => x?.key === 'lb_militia');
+      if (!sim.castSkill(k, at.x, at.y).ok) fail('의병 봉기: cast');
+      if (sim.blockers().some(b => b.kind === 'militia')) fail('의병 봉기: charging militia hold the road');
+      for (let t = 0; t < 45; t++) sim.update(1 / 30);
+      const m = sim.militia[0];
+      const hit = sim.stats.kills > 0 || sim.foes.reduce((a, f) => a + f.hp, 0) < hp0 * 0.6;
+      if (!hit) fail('의병 봉기: the charge hurt nobody');
+      if (!m || m.rushTo != null || !(m.d < p.len * 0.5 - 150) || !sim.blockers().includes(m)) fail(`의병 봉기: militia did not charge and stand (d ${m && Math.round(m.d)} of ${Math.round(p.len)})`);
+      res.militiaRush = { foeHp: `${Math.round(hp0)}→${Math.round(sim.foes.reduce((a, f) => a + f.hp, 0))}`, kills: sim.stats.kills, standAt: Math.round(m?.d) };
     }
     // 군주의 위엄: squads close to the castle hit harder
     const s = expectedSave('liubei', 12, 1, { talents: ['sk1', 'sk1', 'sk1', 'aura', 'aura', 'aura'] });
@@ -831,7 +870,17 @@ async function shot(game, name, params) {
       b.openSquad(b.sim.squads.find(q => !q.gen && (TROOPS[want] ? q.type === want : true)) || b.sim.squads[0]);
     }
     if (tutKey && b.tut) b.tut.enter(TUT_STEPS.find(s => s.key === tutKey));
-    if (params.has('aim')) b.onSkill(2);
+    if (params.has('aim')) { // aiming the third order at a point on the road
+      b.onSkill(2);
+      const q = pathAt(b.sim.paths[0], b.sim.paths[0].len * 0.6);
+      if (b.ui.aim) { b.ui.aim.x = q.x; b.ui.aim.y = q.y; }
+    }
+    if (params.has('rush')) { // &rush=1: 의병 봉기 a moment after the order
+      const k = b.sim.skills.findIndex(x => x?.key === 'lb_militia');
+      const q = pathAt(b.sim.paths[0], b.sim.paths[0].len * 0.6);
+      if (k >= 0) { b.sim.skills[k].cdT = 0; b.sim.castSkill(k, q.x, q.y); }
+      for (let t = 0; t < 12; t++) { b.sim.update(1 / 30); b.view.absorb(b.sim.events); b.sim.events = []; }
+    }
     if (params.has('rally')) { // &rally=1: aiming where a melee squad should stand; &rally=2: already sent there
       const mq = b.sim.squads.find(x => !x.gen && TROOPS[x.type].melee && !x.rallied);
       if (mq) {

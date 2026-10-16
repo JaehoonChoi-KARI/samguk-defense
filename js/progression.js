@@ -2,13 +2,17 @@
 // stars and newly unlocked troop types are written into the save.
 
 import {
-  stageGold, stageExp, starGold, expNeed, recLevel, REPLAY_RATE, NO_REWARD_GAP, MAX_LORD_LEVEL,
+  stageGold, stageExp, starGold, expNeed, recLevel, REPLAY_RATE, NO_REWARD_GAP, LOW_REWARD, MAX_LORD_LEVEL,
   SKILL_UNLOCK, EQUIPS, sellPrice, TROOP_KEYS, TROOP_UNLOCK, ITEM_KEYS, STAGE_COUNT, diffOf,
   GENERALS, GENERAL_PICKS, LORDS, generalsOf, challengeGold,
 } from './data.js';
 
-// Would replaying this stage give no rewards at the save's current level?
-export const noReward = (save, idx) => save.stages[idx].clears > 0 && save.level >= recLevel(idx + 1) + NO_REWARD_GAP;
+// Replays pay REPLAY_RATE of a first clear; a lord NO_REWARD_GAP or more levels above the stage
+// gets LOW_REWARD of that (old stages are no gold mine, but they always give something).
+export const lowReward = (save, idx) => save.stages[idx].clears > 0 && save.level >= recLevel(idx + 1) + NO_REWARD_GAP;
+export const rewardRate = (save, idx) => (save.stages[idx].clears > 0 ? REPLAY_RATE * (lowReward(save, idx) ? LOW_REWARD : 1) : 1);
+// Gold for winning the stage now, before stars and the challenge.
+export const clearGold = (save, idx) => Math.round(stageGold(idx + 1) * rewardRate(save, idx) * diffOf(save).gold);
 
 export function addExp(save, exp) {
   const out = { levels: 0, newSkills: [] };
@@ -54,10 +58,8 @@ export function applyResult(save, story, r) {
 
   if (!r.won) {
     // a little experience for trying
-    if (!noReward(save, idx)) {
-      out.exp = Math.round(stageExp(n) * 0.2 * Math.min(1, (r.wavesReached || 1) / (r.totalWaves || 1)));
-      Object.assign(out, addExp(save, out.exp));
-    }
+    out.exp = Math.round(stageExp(n) * 0.2 * Math.min(1, (r.wavesReached || 1) / (r.totalWaves || 1)) * (lowReward(save, idx) ? LOW_REWARD : 1));
+    Object.assign(out, addExp(save, out.exp));
     return out;
   }
 
@@ -70,11 +72,10 @@ export function applyResult(save, story, r) {
     out.item = g.item;
     out.itemDup = g.dup;
     out.gold += g.gold;
-  } else if (noReward(save, idx)) {
-    out.sleep = true;
   } else {
-    out.gold = Math.round(stageGold(n) * REPLAY_RATE * diffOf(save).gold);
-    out.exp = Math.round(stageExp(n) * REPLAY_RATE);
+    out.sleep = lowReward(save, idx);
+    out.gold = clearGold(save, idx);
+    out.exp = Math.round(stageExp(n) * rewardRate(save, idx));
   }
   if (r.challenge?.done && !st.ch) {
     st.ch = 1;

@@ -4,7 +4,7 @@
 import {
   VERSION, GATE_HP, HORDE, TROOPS, TROOP_KEYS, STRONG, STRONG_WHY, LORDS, LORD_KEYS, SKILLS, SKILL_UNLOCK, EQUIPS, GRADES, SLOTS,
   ITEMS, ITEM_KEYS, ITEM_CARRY_MAX, FACTIONS, TROOP_UNLOCK, BOSS_SKILLS, MAX_TROOP_LEVEL, MAX_ENHANCE,
-  STAGE_COUNT, troopUpCost, enhanceCost, equipFx, fxText, expNeed, recLevel, stageGold, fmt, weakTo, pct,
+  STAGE_COUNT, troopUpCost, enhanceCost, equipFx, fxText, expNeed, recLevel, fmt, weakTo, pct,
   DIFFS, diffOf, GENERALS, GEN_SPECIALS, GENERAL_PICKS, COUNTER_MARK, COUNTER_NAME, COUNTER_MULT, relations, bestLevel, RING,
   generalsOf, WEATHER, weatherKey, stageChallenge, challengeGold, GROUND, FORMATIONS, holdsRoad,
 } from './data.js';
@@ -19,7 +19,7 @@ import { equipTotals, troopStats, lordLeadership, rosterLead, troopUnlocked, ski
 import { stageWaves, stageSummary } from './waves.js';
 import { stageLayout } from './maps.js';
 import { stageField } from './field.js';
-import { noReward } from './progression.js';
+import { lowReward, clearGold } from './progression.js';
 import { troopIcon, lordIcon, generalIcon } from './sprites.js';
 import { drawChinaMap, mapFit } from './chinamap.js';
 import { recommendRoster, recommendGenerals } from './bot.js';
@@ -359,7 +359,7 @@ function mapScreen(game, { sel = null } = {}) {
     const rec = recLevel(i + 1);
     const stars = s.stages[i].stars;
     const cleared = s.stages[i].clears > 0;
-    const sleep = noReward(s, i);
+    const sleep = lowReward(s, i);
     const prev = i > 0 ? story.stages[i - 1] : null;
     const reward = !cleared && st.reward ? `<div class="mc-reward">🎁 첫 클리어 보상: ${EQUIPS[st.reward].icon} ${gradeName(st.reward)}</div>` : '';
     panel.innerHTML = `
@@ -379,7 +379,7 @@ function mapScreen(game, { sel = null } = {}) {
       <div class="ms-foot">
         <div class="mc-info">
           <span class="${s.level < rec ? 'warn' : ''}">권장 Lv ${rec} (지금 Lv ${s.level})</span>
-          ${sleep ? '<span class="sleep">💤 레벨이 높아서 보상이 없어요</span>' : `<span>💰 ${fmt(s.stages[i].clears ? Math.round(stageGold(i + 1) * 0.5) : stageGold(i + 1))}</span>`}
+          <span>💰 ${fmt(clearGold(s, i))}</span>${sleep ? '<span class="sleep">💤 레벨이 높아서 보상 1/4</span>' : ''}
         </div>
         ${reward}
         <button class="btn primary mc-go" type="button">🏕 정비하러 가기 ▶</button>
@@ -480,7 +480,7 @@ function prepScreen(game, { stageIdx }) {
               <span class="weak">${BOSS_SKILLS[st.boss.skill]}</span>
             </div>
           </div>
-          <div class="lvl-note ${s.level < rec ? 'warn' : ''}">권장 군주 레벨 ${rec} · 지금 Lv ${s.level}${noReward(s, stageIdx) ? ' · 💤 보상 없음' : ''}</div>
+          <div class="lvl-note ${s.level < rec ? 'warn' : ''}">권장 군주 레벨 ${rec} · 지금 Lv ${s.level}${lowReward(s, stageIdx) ? ' · 💤 보상 1/4' : ''}</div>
           <div class="field-note">
             <div><b>${weather.icon} ${weather.name}</b>${weather !== WEATHER.clear ? ` <small>${weather.text}</small>` : ''}</div>
             <div>진지 칸 ${field.list.length} · ⛰️ 언덕 ${field.counts.hill} · 🌲 숲 ${field.counts.forest} · 🚧 길목 ${field.counts.choke}</div>
@@ -1024,7 +1024,7 @@ function resultScreen(game, { r, out }) {
   const story = storyOf(s);
   const st = story.stages[r.stageIdx];
   const lines = [];
-  if (out.sleep) lines.push('<div class="rw sleep">💤 레벨이 높아서 이번에는 보상이 없어요</div>');
+  if (out.sleep) lines.push('<div class="rw sleep">💤 레벨이 높아서 이번에는 보상이 1/4로 줄었어요</div>');
   if (out.gold) lines.push(`<div class="rw">💰 골드 +${fmt(out.gold)}${out.starGold ? ` <small>(별 보너스 ${fmt(out.starGold)} 포함)</small>` : ''}</div>`);
   if (out.exp) lines.push(`<div class="rw">✨ 경험치 +${fmt(out.exp)}</div>`);
   if (out.levels) lines.push(`<div class="rw big">🎉 레벨 업! Lv ${s.level} <small>통솔력 ${lordLeadership(s)} · 특성 포인트 +${out.levels}</small></div>`);

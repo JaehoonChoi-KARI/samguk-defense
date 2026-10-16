@@ -324,6 +324,7 @@ export const STORIES = {
         enemy: 'liang',
         terrain: 'mountain',
         mix: { cavalry: 5, spear: 2, infantry: 1, archer: 1 },
+        fewer: { cavalry: 0.5 }, // the cavalry came in floods too big to hold on every difficulty
         boss: { name: '마초', title: '금마초', type: 'cavalry', skill: 'charge' },
         reward: 'w_zhangba',
         intro: [
